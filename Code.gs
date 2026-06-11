@@ -48,11 +48,10 @@ function getSheet_() {
   let sheet = ss.getSheetByName(SHEET_NAME);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAME);
-    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-    sheet.setFrozenRows(1);
-    // Style header row
     const hRange = sheet.getRange(1, 1, 1, HEADERS.length);
+    hRange.setValues([HEADERS]);
     hRange.setBackground('#7C3AFF').setFontColor('#FFFFFF').setFontWeight('bold');
+    sheet.setFrozenRows(1);
     sheet.setColumnWidth(3, 300); // back_content wider
   }
   return sheet;
@@ -95,7 +94,8 @@ function getDueCards() {
     })
     .filter(c => !c.due || new Date(c.due) <= today)
     .sort((a, b) => {
-      if (!a.due) return 1;   // new cards at the end
+      if (!a.due && !b.due) return 0;  // both new — preserve relative order
+      if (!a.due) return 1;            // new cards at end
       if (!b.due) return -1;
       return new Date(a.due) - new Date(b.due); // most overdue first
     })
