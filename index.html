@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html data-theme="light" lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>⚡ Flash</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,700;0,900;1,400&family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+KR:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+:root {
+  --pink:    #FF2D87;
+  --purple:  #7C3AFF;
+  --mint:    #00D68F;
+  --amber:   #FFB800;
+  --blue:    #00B4FF;
+  --red:     #FF3B30;
+  --bg:        #F5F0FF;
+  --bg2:       #EDE8FF;
+  --surface:   #FFFFFF;
+  --surface2:  #F8F5FF;
+  --text:      #14142B;
+  --text2:     #6B6894;
+  --border:    rgba(124,58,255,0.15);
+  --shadow:    0 8px 40px rgba(124,58,255,0.14);
+  --shadow-sm: 0 2px 12px rgba(124,58,255,0.10);
+  --radius:    20px;
+}
+[data-theme="dark"] {
+  --bg:       #07071A;
+  --bg2:      #0D0D28;
+  --surface:  #10102E;
+  --surface2: #18183C;
+  --text:     #EEEAFF;
+  --text2:    #8886AA;
+  --border:   rgba(124,58,255,0.28);
+  --shadow:   0 8px 40px rgba(124,58,255,0.30);
+  --shadow-sm:0 2px 12px rgba(124,58,255,0.20);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans SC', 'Noto Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition: background .3s, color .3s;
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(ellipse 55% 55% at 15% 15%, rgba(124,58,255,.09) 0%, transparent 65%),
+    radial-gradient(ellipse 50% 50% at 85% 85%, rgba(255,45,135,.08) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 40% at 70% 10%, rgba(0,214,143,.06) 0%, transparent 65%),
+    radial-gradient(ellipse 35% 35% at 20% 85%, rgba(0,180,255,.05) 0%, transparent 65%);
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity .4s;
+}
+[data-theme="dark"] body::before {
+  background:
+    radial-gradient(ellipse 55% 55% at 15% 15%, rgba(124,58,255,.18) 0%, transparent 65%),
+    radial-gradient(ellipse 50% 50% at 85% 85%, rgba(255,45,135,.14) 0%, transparent 65%),
+    radial-gradient(ellipse 40% 40% at 70% 10%, rgba(0,214,143,.10) 0%, transparent 65%),
+    radial-gradient(ellipse 35% 35% at 20% 85%, rgba(0,180,255,.08) 0%, transparent 65%);
+}
+.top-bar {
+  position: fixed; top: 0; left: 0; right: 0; height: 52px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; z-index: 200;
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  background: rgba(255,255,255,0.75);
+  border-bottom: 1px solid var(--border);
+  transition: background .3s, border .3s;
+}
+[data-theme="dark"] .top-bar { background: rgba(16,16,46,0.85); }
+.logo {
+  font-weight: 900; font-size: 1.15rem; letter-spacing: -.01em;
+  background: linear-gradient(135deg, var(--purple) 0%, var(--pink) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.top-actions { display: flex; gap: 8px; align-items: center; }
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface2);
+  cursor: pointer; font-size: 1rem;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .2s, background .3s;
+}
+.icon-btn:hover { transform: scale(1.1) rotate(12deg); }
+.screen {
+  position: relative; z-index: 1;
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 68px 16px 32px;
+}
+.hidden { display: none !important; }
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 28px 24px;
+  width: 100%; max-width: 580px;
+  transition: background .3s, border .3s, box-shadow .3s;
+}
+.stats-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 12px; margin-bottom: 24px;
+}
+.stat-box {
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 16px 12px; text-align: center;
+  transition: background .3s;
+}
+.stat-num {
+  font-size: 2rem; font-weight: 900; line-height: 1; margin-bottom: 4px;
+  background: linear-gradient(135deg, var(--purple), var(--pink));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.stat-num.mint  { background: linear-gradient(135deg, var(--mint), var(--blue));
+                  -webkit-background-clip: text; background-clip: text; }
+.stat-num.amber { background: linear-gradient(135deg, var(--amber), var(--pink));
+                  -webkit-background-clip: text; background-clip: text; }
+.stat-label { font-size: .68rem; font-weight: 700; text-transform: uppercase;
+              letter-spacing: .08em; color: var(--text2); }
+.home-title { font-size: 1.3rem; font-weight: 900; margin-bottom: 4px; }
+.home-sub   { color: var(--text2); font-size: .85rem; margin-bottom: 20px; }
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 13px 24px; border: none; border-radius: 100px;
+  font-family: inherit; font-weight: 700; font-size: .95rem;
+  cursor: pointer; white-space: nowrap;
+  transition: transform .15s, box-shadow .15s, opacity .15s, background .2s;
+}
+.btn:hover:not(:disabled) { transform: translateY(-2px); }
+.btn:active:not(:disabled) { transform: translateY(0) scale(.98); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn-block { width: 100%; }
+.btn-primary {
+  background: linear-gradient(135deg, var(--purple) 0%, var(--pink) 100%);
+  color: #fff; box-shadow: 0 4px 20px rgba(124,58,255,.40);
+}
+.btn-secondary { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }
+.btn-hint {
+  background: transparent; color: var(--purple);
+  border: 1.5px solid var(--purple); padding: 10px 20px; font-size: .88rem;
+}
+.btn-hint:hover:not(:disabled) { background: rgba(124,58,255,.08); }
+.btn-flip {
+  background: linear-gradient(135deg, var(--amber) 0%, #FF8C00 100%);
+  color: #fff; box-shadow: 0 4px 16px rgba(255,184,0,.40);
+  padding: 10px 20px; font-size: .88rem;
+}
+.btn-skip {
+  background: transparent; color: var(--text2);
+  border: 1.5px dashed var(--border); padding: 10px 20px; font-size: .88rem;
+}
+.btn-skip:hover:not(:disabled) { background: rgba(124,58,255,.06); color: var(--text); }
+.skip-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,184,0,.18); color: var(--amber);
+  border-radius: 100px; font-size: .62rem; font-weight: 700;
+  padding: 1px 6px; margin-left: 5px; letter-spacing: .04em;
+}
+.btn-spell {
+  background: transparent; color: var(--mint);
+  border: 1.5px solid var(--mint); padding: 10px 20px; font-size: .88rem;
+}
+.btn-spell:hover:not(:disabled) { background: rgba(0,214,143,.08); }
+.rating-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 8px; margin-top: 18px;
+}
+.btn-rate {
+  padding: 11px 6px; font-size: .8rem; font-weight: 700;
+  border-radius: 12px; color: #fff; border: none;
+  cursor: pointer; font-family: inherit;
+  transition: transform .15s, box-shadow .15s, outline .1s;
+  position: relative;
+}
+.btn-rate:hover { transform: translateY(-2px) scale(1.03); }
+.btn-rate:active { transform: scale(.97); }
+.btn-rate .interval-badge {
+  display: block; font-size: .65rem; font-weight: 400; opacity: .85; margin-top: 2px;
+}
+.btn-again { background: #FF2D87; box-shadow: 0 3px 14px rgba(255,45,135,.40); }
+.btn-hard  { background: #FF7A00; box-shadow: 0 3px 14px rgba(255,122,0,.40); }
+.btn-good  { background: #7C3AFF; box-shadow: 0 3px 14px rgba(124,58,255,.40); }
+.btn-easy  { background: #00A870; box-shadow: 0 3px 14px rgba(0,168,112,.40); }
+.btn-rate.suggested {
+  outline: 3px solid rgba(255,255,255,0.85);
+  outline-offset: 2px; transform: scale(1.06);
+}
+.rating-hint { text-align: center; font-size: .7rem; color: var(--text2); margin-top: 8px; }
+.progress-wrap { width: 100%; max-width: 860px; margin-bottom: 14px; }
+.progress-meta {
+  display: flex; justify-content: space-between;
+  font-size: .72rem; color: var(--text2); margin-bottom: 5px; font-weight: 600;
+}
+.progress-track { height: 5px; background: var(--bg2); border-radius: 100px; overflow: hidden; }
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--purple) 0%, var(--pink) 100%);
+  border-radius: 100px; transition: width .45s cubic-bezier(.4,0,.2,1);
+}
+.card-scene { width: 100%; max-width: 860px; perspective: 1200px; margin-bottom: 14px; }
+.card-3d {
+  width: 100%; min-height: clamp(420px, 62vh, 780px);
+  position: relative; transform-style: preserve-3d;
+  transition: transform .55s cubic-bezier(.4,0,.2,1);
+}
+.card-3d.flipped { transform: rotateY(180deg); }
+.card-face {
+  position: absolute; inset: 0;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 24px 22px; overflow-y: auto;
+  min-height: clamp(420px, 62vh, 780px);
+  display: flex; flex-direction: column; transition: background .3s;
+}
+.card-face-back { transform: rotateY(180deg); }
+.card-meta {
+  font-size: .68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .09em; color: var(--text2); margin-bottom: 14px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.card-meta-tag {
+  background: linear-gradient(135deg, var(--purple), var(--pink));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+/* ── Title ── */
+.card-title {
+  font-size: 1.35rem; font-weight: 900; color: var(--text);
+  text-align: center; padding: 18px 0 10px;
+  letter-spacing: -.01em; line-height: 1.3;
+}
+.keywords-area {
+  flex: 1; display: flex; flex-wrap: wrap;
+  gap: 10px; align-content: flex-start; min-height: 80px;
+}
+.kw-pill {
+  padding: 7px 16px; border-radius: 100px;
+  font-weight: 700; font-size: .95rem;
+  animation: popIn .28s cubic-bezier(.34,1.56,.64,1) both;
+}
+.kw-pill.ghost {
+  background: var(--bg2) !important; color: transparent !important;
+  border: 1.5px dashed var(--border); animation: none; user-select: none;
+}
+/* ── Spell slot: ghost pill becomes an inline input ── */
+.kw-pill.spell-slot {
+  background: var(--bg2) !important;
+  border: 1.5px dashed var(--purple);
+  color: var(--text); -webkit-text-fill-color: var(--text);
+  font-weight: 700; font-size: .95rem; font-family: inherit;
+  outline: none; min-width: 80px; width: auto;
+  padding: 7px 16px; border-radius: 100px; animation: none;
+  transition: border-color .15s, background .15s;
+}
+.kw-pill.spell-slot::placeholder { color: var(--text2); opacity: .5; font-weight: 400; }
+.kw-pill.spell-slot:focus { border-color: var(--pink); border-style: solid; }
+.kw-pill.spell-slot.correct {
+  border-color: var(--mint); border-style: solid;
+  background: rgba(0,214,143,.08) !important;
+  color: #00956A; -webkit-text-fill-color: #00956A;
+}
+.kw-pill.spell-slot.wrong {
+  border-color: var(--pink); border-style: solid;
+  background: rgba(255,45,135,.08) !important;
+}
+[data-theme="dark"] .kw-pill.spell-slot.correct {
+  color: var(--mint); -webkit-text-fill-color: var(--mint);
+}
+/* Accent colors for revealed pills */
+.kw-pill:nth-child(5n+1) { background:rgba(255,45,135,.12);  color:var(--pink); }
+.kw-pill:nth-child(5n+2) { background:rgba(124,58,255,.12);  color:var(--purple); }
+.kw-pill:nth-child(5n+3) { background:rgba(0,214,143,.12);   color:#00956A; }
+.kw-pill:nth-child(5n+4) { background:rgba(255,184,0,.12);   color:#B88000; }
+.kw-pill:nth-child(5n+5) { background:rgba(0,180,255,.12);   color:#0090CC; }
+[data-theme="dark"] .kw-pill:nth-child(5n+3) { color:var(--mint); }
+[data-theme="dark"] .kw-pill:nth-child(5n+4) { color:var(--amber); }
+[data-theme="dark"] .kw-pill:nth-child(5n+5) { color:var(--blue); }
+@keyframes popIn {
+  from { transform: scale(.4) rotate(-10deg); opacity: 0; }
+  to   { transform: scale(1)  rotate(0deg);   opacity: 1; }
+}
+.front-actions {
+  display: flex; gap: 10px; justify-content: center;
+  margin-top: 18px; flex-wrap: wrap;
+}
+.hint-status { text-align: center; font-size: .7rem; color: var(--text2); margin-top: 8px; }
+/* ── Spell result + actions ── */
+.spell-result {
+  display: none; text-align: center; font-size: .75rem;
+  color: var(--text2); margin-top: 6px;
+}
+.spell-actions {
+  display: none; gap: 8px; justify-content: center;
+  flex-wrap: wrap; margin-top: 8px;
+}
+.back-content {
+  flex: 1; overflow-y: auto; font-size: .93rem; line-height: 1.75; color: var(--text);
+}
+.back-content-text { white-space: pre-wrap; }
+.back-content img  { max-width:100%; border-radius:12px; margin:8px 0; display:block; }
+.back-content h1,.back-content h2,.back-content h3
+  { margin: .7em 0 .3em; color:var(--text); font-weight:900; }
+.back-content h1 { font-size:1.3em; }
+.back-content h2 { font-size:1.1em; }
+.back-content h3 { font-size:1em; }
+.back-content p  { margin-bottom:.7em; }
+.back-content ul,.back-content ol { padding-left: 1.4em; margin-bottom:.7em; }
+.back-content pre {
+  background: var(--bg2); padding: 12px 14px; border-radius: 10px;
+  overflow-x: auto; font-size: .82em; margin: .5em 0;
+}
+.back-content code {
+  font-family: monospace; background: var(--bg2);
+  padding: 1px 5px; border-radius: 4px; font-size: .85em;
+}
+.back-content blockquote {
+  border-left: 3px solid var(--purple); padding-left: 12px;
+  color: var(--text2); margin: .5em 0;
+}
+.back-content table { border-collapse: collapse; width: 100%; margin: .5em 0; }
+.back-content th,.back-content td {
+  padding: 6px 10px; border: 1px solid var(--border); font-size: .88em;
+}
+.back-content th { background: var(--bg2); font-weight: 700; }
+.complete-icon  { font-size: 4rem; line-height: 1; margin-bottom: 12px; }
+.complete-title { font-size: 2rem; font-weight: 900; margin-bottom: 6px; }
+.complete-sub   { color: var(--text2); font-size: .9rem; margin-bottom: 24px; }
+.complete-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 10px; margin-bottom: 24px;
+}
+.cs-box { background: var(--bg2); border-radius: 12px; padding: 12px 8px; text-align: center; }
+.cs-num { font-size: 1.5rem; font-weight: 900; }
+.cs-lbl { font-size: .65rem; text-transform: uppercase;
+          letter-spacing: .07em; color: var(--text2); margin-top: 2px; }
+.spinner {
+  width: 44px; height: 44px; border: 4px solid var(--border);
+  border-top-color: var(--purple); border-radius: 50%;
+  animation: spin .75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.state-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 100px;
+  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing:.06em;
+}
+.badge-new      { background: rgba(0,180,255,.15); color: var(--blue); }
+.badge-learning { background: rgba(255,184,0,.15);  color: var(--amber); }
+.badge-review   { background: rgba(124,58,255,.15); color: var(--purple); }
+.badge-relearn  { background: rgba(255,45,135,.15); color: var(--pink); }
+.docs-link {
+  font-size: .75rem; font-weight: 600; color: var(--text2);
+  text-decoration: none; padding: 4px 10px; border-radius: 100px;
+  border: 1px solid var(--border); transition: color .15s, background .15s;
+}
+.docs-link:hover { color: var(--purple); background: rgba(124,58,255,.08); }
+#docs-modal { position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column; }
+#docs-content { flex: 1; display: flex; overflow: hidden; }
+@media (max-width: 420px) {
+  .rating-grid { grid-template-columns: repeat(2, 1fr); }
+  .stats-grid  { grid-template-columns: repeat(3, 1fr); }
+  .panel, .card-face { padding: 18px 14px; }
+  .stat-num { font-size: 1.5rem; }
+}
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div class="logo">⚡ Flash</div>
+  <div class="top-actions">
+    <a class="docs-link" onclick="openDocs()" style="cursor:pointer;">📖 Docs</a>
+    <button class="icon-btn" id="docsBtn" onclick="openDocsNewTab()" title="Documentation">📖</button>
+    <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+  </div>
+</div>
+
+<div id="s-loading" class="screen">
+  <div class="spinner"></div>
+</div>
+
+<div id="s-home" class="screen hidden">
+  <div class="panel">
+    <div class="home-title">Daily Review</div>
+    <div class="home-sub" id="home-date"></div>
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-num" id="stat-due">—</div>
+        <div class="stat-label">Due</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num mint" id="stat-new">—</div>
+        <div class="stat-label">New</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num amber" id="stat-total">—</div>
+        <div class="stat-label">Total</div>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-block" id="startBtn" onclick="startSession()">
+      ▶&nbsp; Start Review
+    </button>
+  </div>
+</div>
+
+<div id="s-session" class="screen hidden">
+  <div class="progress-wrap">
+    <div class="progress-meta">
+      <span id="prog-text">0 / 0</span>
+      <span id="prog-pct">0%</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill" id="prog-fill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <div class="card-scene">
+    <div class="card-3d" id="card3d">
+
+      <!-- Front -->
+      <div class="card-face card-face-front">
+        <div class="card-meta">
+          <span>Keywords</span>
+          <span>
+            <span id="kw-count" class="card-meta-tag">0 / 0</span>
+            &nbsp;·&nbsp;
+            <span id="state-badge" class="state-badge badge-new">New</span>
+          </span>
+        </div>
+        <div class="card-title" id="card-title"></div>
+        <div class="keywords-area" id="kw-area"></div>
+        <div class="front-actions">
+          <button class="btn btn-hint" id="btn-hint" onclick="revealHint()">＋ Hint</button>
+          <button class="btn btn-spell" id="btn-spell" onclick="toggleSpell()">✎ Spell</button>
+          <button class="btn btn-flip" onclick="flipCard()">↩ Flip</button>
+          <button class="btn btn-skip" id="btn-skip" onclick="skipCard()">
+            ⤳ Skip<span class="skip-badge" id="skip-count" style="display:none"></span>
+          </button>
+        </div>
+        <div class="hint-status" id="hint-status"></div>
+        <div class="spell-result" id="spell-result"></div>
+        <div class="spell-actions" id="spell-actions">
+          <button class="btn btn-spell" onclick="checkSpelling()">✔ Check</button>
+          <button class="btn btn-secondary" style="padding:10px 20px;font-size:.88rem"
+            onclick="clearSpell()">✕ Clear</button>
+        </div>
+      </div>
+
+      <!-- Back -->
+      <div class="card-face card-face-back">
+        <div class="card-meta">
+          <span>Answer</span>
+          <button class="btn btn-flip" onclick="unflipCard()">↪ Flip</button>
+          <span id="back-type-badge" class="card-meta-tag">text</span>
+        </div>
+        <div class="back-content" id="back-content"></div>
+        <div class="rating-grid">
+          <button class="btn-rate btn-again" onclick="rate(1)">
+            Again<span class="interval-badge" id="int-1"></span>
+          </button>
+          <button class="btn-rate btn-hard" onclick="rate(2)">
+            Hard<span class="interval-badge" id="int-2"></span>
+          </button>
+          <button class="btn-rate btn-good" onclick="rate(3)">
+            Good<span class="interval-badge" id="int-3"></span>
+          </button>
+          <button class="btn-rate btn-easy" onclick="rate(4)">
+            Easy<span class="interval-badge" id="int-4"></span>
+          </button>
+        </div>
+        <div class="rating-hint" id="rating-hint"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div id="s-complete" class="screen hidden">
+  <div class="panel" style="text-align:center">
+    <div class="complete-icon">🎉</div>
+    <div class="complete-title">All done!</div>
+    <div class="complete-sub">Today's session is complete.</div>
+    <div class="complete-stats">
+      <div class="cs-box">
+        <div class="cs-num" id="cs-total">0</div>
+        <div class="cs-lbl">Reviewed</div>
+      </div>
+      <div class="cs-box">
+        <div class="cs-num" id="cs-again">0</div>
+        <div class="cs-lbl">Again</div>
+      </div>
+      <div class="cs-box">
+        <div class="cs-num" id="cs-good">0</div>
+        <div class="cs-lbl">Good+</div>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-block" onclick="showHome()">↩ Home</button>
+  </div>
+</div>
+
+<div id="docs-modal" class="hidden">
+  <button onclick="closeDocs()" style="
+    position:fixed; top:12px; right:16px;
+    background:none; border:none; font-size:1.5rem;
+    cursor:pointer; color:var(--pink); z-index:501;"
+    onmouseover="this.style.color='var(--amber)'; this.style.transform='scale(1.2)'"
+    onmouseout="this.style.color='var(--pink)'; this.style.transform='scale(1)'">✕</button>
+  <div id="docs-content"></div>
+</div>
+
+<script>
+function openDocsNewTab() {
+  google.script.run.withSuccessHandler(function(url) {
+    window.open(url, '_blank');
+  }).getDocsUrl();
+}
+function openDocs() {
+  const modal = document.getElementById('docs-modal');
+  modal.classList.remove('hidden');
+  if (document.querySelector('#docs-modal iframe')) return;
+  google.script.run
+    .withSuccessHandler(html => {
+      const blob = new Blob([html], { type: 'text/html' });
+      const url  = URL.createObjectURL(blob);
+      const iframe = document.createElement('iframe');
+      iframe.src = url;
+      iframe.style.cssText = 'width:100%;height:100%;border:none;';
+      document.getElementById('docs-content').appendChild(iframe);
+    })
+    .getDocsHtml();
+}
+function closeDocs() {
+  document.getElementById('docs-modal').classList.add('hidden');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FSRS v5
+// Ref: https://github.com/open-spaced-repetition/py-fsrs
+// ═══════════════════════════════════════════════════════════════════════════
+// Default parameters (19 values, open-spaced-repetition/py-fsrs v5)
+const W = [
+  0.40255, 1.18385, 3.17300, 15.69105,   // w[0..3]  S₀ per grade
+  7.19490, 0.53450,  1.46040,  0.00460,   // w[4..7]  D₀, difficulty
+  1.54575, 0.11920,  1.01925,  1.93950,   // w[8..11] recall stability
+  0.11000, 0.29605,  2.26980,  0.23150,   // w[12..15] forget stability + hard penalty
+  2.98980, 0.51655,  0.66210              // w[16..18] easy bonus, short-term
+];
+// Intra-day steps for Learning/Relearning states (in fractional days)
+const LEARNING_STEPS = [10 / 1440, 60 / 1440]; // Again→10 min, Hard→1 h
+const TARGET_RETENTION = 0.90;
+const DECAY  = -0.5;
+const FACTOR = Math.pow(TARGET_RETENTION, 1 / DECAY) - 1;
+
+function forgettingCurve(t, s) {
+  if (!s || s <= 0) return 0;
+  return Math.pow(1 + FACTOR * t / s, DECAY);
+}
+function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
+function initS(g) { return Math.max(W[g - 1], 0.1); }
+function initD(g) { return clamp(W[4] - Math.exp(W[5] * (g - 1)) + 1, 1, 10); }
+function nextD(d, g) {
+  const dPrime = d + (-W[6] * (g - 3));
+  return clamp(W[7] * W[4] + (1 - W[7]) * dPrime, 1, 10);
+}
+function sRecall(d, s, r, g) {
+  const hardPenalty = g === 2 ? W[15] : 1;
+  const easyBonus   = g === 4 ? W[16] : 1;
+  return s * (Math.exp(W[8]) * (11 - d) * Math.pow(s, -W[9])
+    * (Math.exp(W[10] * (1 - r)) - 1) * hardPenalty * easyBonus + 1);
+}
+function sForget(d, s, r) {
+  return Math.max(
+    W[11] * Math.pow(d, -W[12]) * (Math.pow(s + 1, W[13]) - 1)
+    * Math.exp(W[14] * (1 - r)), 0.1);
+}
+function sShort(s, g) { return Math.max(s * Math.exp(W[17] * (g - 3 + W[18])), 0.1); }
+function daysBetween(a, b) { return Math.round((b - a) / 86400000); }
+function nextInterval(card, g) { return scheduleCard(card, g).scheduled_days; }
+function formatInterval(days) {
+  if (days < 1 / 1440) return '<1m';
+  if (days < 1 / 24)   return Math.round(days * 1440) + 'm';
+  if (days < 1)        return Math.round(days * 24) + 'h';
+  if (days < 30)       return Math.round(days) + 'd';
+  if (days < 365)      return Math.round(days / 30) + 'mo';
+  return (days / 365).toFixed(1) + 'y';
+}
+function scheduleCard(card, rating) {
+  const now     = new Date();
+  const state   = Number(card.state) || 0;
+  const lr      = card.last_review ? new Date(card.last_review) : now;
+  const elapsed = state >= 2 ? Math.max(0, daysBetween(lr, now)) : 0;
+  const s       = Math.max(Number(card.stability) || 0.1, 0.1);
+  const d       = clamp(Number(card.difficulty) || initD(rating), 1, 10);
+  const r       = state >= 2 ? forgettingCurve(elapsed, s) : 1;
+  let newS, newD, newState, schDays;
+  if (state === 0) {                  // ── New ──
+    newD = initD(rating); newS = initS(rating);
+    if (rating <= 2) { newState = 1; schDays = 0; }
+    else             { newState = 2; schDays = Math.max(1, Math.round(newS)); }
+  } else if (state === 1) {           // ── Learning ──
+    newD = nextD(d, rating); newS = sShort(s, rating);
+    if (rating === 1)      { newState = 1; schDays = LEARNING_STEPS[0]; } // Again → 10 min
+    else if (rating === 2) { newState = 1; schDays = LEARNING_STEPS[1]; } // Hard  → 1 h
+    else                   { newState = 2; schDays = Math.max(1, Math.round(newS)); }
+  } else if (state === 2) {           // ── Review ──
+    newD = nextD(d, rating);
+    if (rating === 1) { newS = sForget(d, s, r); newState = 3; schDays = 0; }
+    else { newS = Math.max(sRecall(d, s, r, rating), 0.1); newState = 2; schDays = Math.max(1, Math.round(newS)); }
+  } else {                            // ── Relearning ──
+    newD = nextD(d, rating); newS = sShort(s, rating);
+    if (rating === 1)      { newState = 3; schDays = LEARNING_STEPS[0]; } // Again → 10 min
+    else if (rating === 2) { newState = 3; schDays = LEARNING_STEPS[1]; } // Hard  → 1 h
+    else                   { newState = 2; schDays = Math.max(1, Math.round(newS)); }
+  }
+  const due = new Date(now.getTime() + schDays * 86400000);
+  return {
+    stability:      +newS.toFixed(4),
+    difficulty:     +newD.toFixed(4),
+    elapsed_days:   elapsed,
+    scheduled_days: schDays,
+    reps:           (Number(card.reps)   || 0) + 1,
+    lapses:         (Number(card.lapses) || 0) + (rating === 1 && state === 2 ? 1 : 0),
+    state:          newState,
+    last_review:    now.toISOString(),
+    due:            due.toISOString()
+  };
+}
+
+// shownCount=0 means no hints yet → Easy; each hint revealed lowers rating
+function shownToRating(shown, total) {
+  if (total <= 1) return null;
+  if (shown >= total)                   return 1; // Again
+  if (shown > Math.ceil(total * 0.55))  return 2; // Hard
+  if (shown > 0)                        return 3; // Good
+  return 4;                                       // Easy — no hints needed
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// App State
+// ═══════════════════════════════════════════════════════════════════════════
+let deck         = [];
+let skipped      = [];
+let idx          = 0;
+let shownCount   = 0;   // keyword hints revealed so far
+let shuffledKw   = [];
+let spellOpen    = false;
+let sessionStats = { total: 0, again: 0, good: 0 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Theme
+// ═══════════════════════════════════════════════════════════════════════════
+function toggleTheme() {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+  localStorage.setItem('fc-theme', next);
+}
+function initTheme() {
+  const saved = localStorage.getItem('fc-theme') || 'light';
+  document.documentElement.setAttribute('data-theme', saved);
+  document.getElementById('themeBtn').textContent = saved === 'dark' ? '☀️' : '🌙';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Screen Management
+// ═══════════════════════════════════════════════════════════════════════════
+const SCREENS = ['s-loading','s-home','s-session','s-complete'];
+function show(id) {
+  SCREENS.forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Home
+// ═══════════════════════════════════════════════════════════════════════════
+function showHome() {
+  show('s-loading');
+  document.getElementById('home-date').textContent =
+    new Date().toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  google.script.run
+    .withSuccessHandler(stats => {
+      document.getElementById('stat-due').textContent   = stats.due;
+      document.getElementById('stat-new').textContent   = stats.new;
+      document.getElementById('stat-total').textContent = stats.total;
+      const btn = document.getElementById('startBtn');
+      btn.textContent = stats.due > 0 ? `▶  Start Review (${stats.due})` : '✓  Nothing due';
+      btn.disabled    = stats.due === 0;
+      show('s-home');
+    })
+    .withFailureHandler(err => { alert('Error: ' + err.message); show('s-home'); })
+    .getStats();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Session
+// ═══════════════════════════════════════════════════════════════════════════
+function startSession() {
+  show('s-loading');
+  google.script.run
+    .withSuccessHandler(cards => {
+      deck  = cards || [];
+      skipped = [];
+      idx   = 0;
+      sessionStats = { total: 0, again: 0, good: 0 };
+      if (!deck.length) { showHome(); return; }
+      show('s-session');
+      updateProgress();
+      loadCard(0);
+    })
+    .withFailureHandler(err => alert('Error loading cards: ' + err.message))
+    .getDueCards();
+}
+
+function loadCard(i) {
+  const card = deck[i];
+  const kws  = String(card.keywords || '').split(/[;,]/).map(k => k.trim()).filter(Boolean);
+
+  // Title shown immediately; all keyword slots start hidden
+  const titleEl = document.getElementById('card-title');
+  titleEl.textContent = card.title || '';
+  titleEl.style.display = card.title ? 'block' : 'none';
+
+  shuffledKw = [...kws].sort(() => Math.random() - 0.5);
+  shownCount = 0;   // no hints revealed at start
+
+  document.getElementById('card3d').classList.remove('flipped');
+  resetSpell();
+
+  const stateMap = {0:'New',1:'Learning',2:'Review',3:'Relearning'};
+  const clsMap   = {0:'badge-new',1:'badge-learning',2:'badge-review',3:'badge-relearn'};
+  const s = Number(card.state) || 0;
+  const badge = document.getElementById('state-badge');
+  badge.textContent = stateMap[s] || 'New';
+  badge.className   = 'state-badge ' + (clsMap[s] || 'badge-new');
+
+  renderFront();
+  updateSkipBadge();
+  renderBack(card);
+  renderIntervalPreviews(card);
+  clearSuggestion();
+}
+
+// ── Front ──────────────────────────────────────────────────────────────────
+function renderFront() {
+  const total = shuffledKw.length;
+  const area  = document.getElementById('kw-area');
+
+  // Preserve typed values from existing spell slots before rebuild
+  const savedInputs = [...area.querySelectorAll('.spell-slot')].map(el => el.value || '');
+
+  area.innerHTML = '';
+
+  for (let i = 0; i < total; i++) {
+    if (i < shownCount) {
+      // Revealed hint: colored pill
+      const pill = document.createElement('span');
+      pill.className = 'kw-pill';
+      pill.textContent = shuffledKw[i];
+      pill.style.animationDelay = (i * 0.06) + 's';
+      area.appendChild(pill);
+    } else if (spellOpen) {
+      // Spell mode: editable input in place of ghost
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'kw-pill spell-slot';
+      inp.placeholder = '●●';
+      inp.value = savedInputs[i - shownCount] || '';
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') checkSpelling(); });
+      area.appendChild(inp);
+    } else {
+      // Normal ghost placeholder
+      const pill = document.createElement('span');
+      pill.className = 'kw-pill ghost';
+      pill.textContent = '●●';
+      area.appendChild(pill);
+    }
+  }
+
+  document.getElementById('kw-count').textContent = `${shownCount} / ${total}`;
+  const remaining = total - shownCount;
+  document.getElementById('btn-hint').disabled = remaining === 0;
+  document.getElementById('hint-status').textContent =
+    remaining > 0 ? `${remaining} hint${remaining>1?'s':''} remaining` : 'All keywords shown';
+}
+
+// ── Back ───────────────────────────────────────────────────────────────────
+function renderBack(card) {
+  const type    = String(card.back_type || 'text').toLowerCase().trim();
+  const content = String(card.back_content || '');
+  const el      = document.getElementById('back-content');
+  document.getElementById('back-type-badge').textContent = type;
+  if (type === 'html')     { el.innerHTML = content; }
+  else if (type === 'md')  { el.innerHTML = marked.parse(content); }
+  else { el.innerHTML = '<div class="back-content-text">' + escHtml(content) + '</div>'; }
+}
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Interval preview badges ────────────────────────────────────────────────
+function renderIntervalPreviews(card) {
+  [1,2,3,4].forEach(g => {
+    document.getElementById('int-' + g).textContent = formatInterval(nextInterval(card, g));
+  });
+}
+
+// ── Controls ───────────────────────────────────────────────────────────────
+function revealHint() {
+  if (shownCount >= shuffledKw.length) return;
+
+  // Collect non-empty typed values from spell slots
+  const typedInputs = [...document.querySelectorAll('.spell-slot')]
+    .map(el => el.value.trim().toLowerCase()).filter(Boolean);
+
+  // Among still-hidden keywords, prefer one NOT close to any typed input
+  const hidden = shuffledKw.slice(shownCount);
+  const pick = hidden.find(kw =>
+    !typedInputs.some(inp => levenClose(inp, kw.toLowerCase(), 2))
+  ) || hidden[0];
+
+  // Swap chosen keyword into the next reveal position
+  const pickIdx = shuffledKw.indexOf(pick, shownCount);
+  if (pickIdx > shownCount) {
+    [shuffledKw[shownCount], shuffledKw[pickIdx]] =
+    [shuffledKw[pickIdx], shuffledKw[shownCount]];
+  }
+  shownCount++;
+  renderFront();
+}
+
+function flipCard() {
+  const card = document.getElementById('card3d');
+  card.classList.toggle('flipped');
+  if (card.classList.contains('flipped')) { applySuggestion(); }
+  else { clearSuggestion(); }
+}
+function unflipCard() {
+  document.getElementById('card3d').classList.remove('flipped');
+}
+
+function skipCard() {
+  deck[idx]._skipped = true;
+  const [card] = deck.splice(idx, 1);
+  deck.push(card);
+  if (idx >= deck.length) idx = 0;
+  updateProgress();
+  updateSkipBadge();
+  loadCard(idx);
+}
+function updateSkipBadge() {
+  const total = deck.filter(c => c._skipped).length;
+  const badge = document.getElementById('skip-count');
+  badge.style.display = total > 0 ? 'inline-flex' : 'none';
+  badge.textContent = total;
+  document.getElementById('btn-skip').disabled = deck.length <= 1;
+}
+function gotoNextCard() {
+  if (deck.length > 1) {
+    deck.push(deck.splice(idx, 1)[0]);
+    updateProgress(); loadCard(idx);
+  } else { alert("Only one card remaining - cannot skip!"); }
+}
+
+function clearSuggestion() {
+  document.querySelectorAll('.btn-rate').forEach(b => b.classList.remove('suggested'));
+  document.getElementById('rating-hint').textContent = '';
+}
+function applySuggestion() {
+  clearSuggestion();
+  const suggested = shownToRating(shownCount, shuffledKw.length);
+  if (!suggested) return;
+  const map    = {1:'.btn-again',2:'.btn-hard',3:'.btn-good',4:'.btn-easy'};
+  const labels = {1:'Again',2:'Hard',3:'Good',4:'Easy'};
+  document.querySelector(map[suggested])?.classList.add('suggested');
+  document.getElementById('rating-hint').textContent =
+    `Suggested: ${labels[suggested]} — ${shownCount} of ${shuffledKw.length} keywords shown`;
+}
+
+function rate(rating) {
+  const card = deck[idx];
+  const fsrs = scheduleCard(card, rating);
+  Object.assign(card, fsrs);
+  delete card._skipped;
+  google.script.run
+    .withFailureHandler(e => { console.error('updateCard failed:', e); alert('Failed to save: ' + e.message); })
+    .updateCard(card.id, fsrs);
+  sessionStats.total++;
+  if (rating === 1) sessionStats.again++; else sessionStats.good++;
+  idx++;
+  if (idx >= deck.length) {
+    document.getElementById('cs-total').textContent = sessionStats.total;
+    document.getElementById('cs-again').textContent = sessionStats.again;
+    document.getElementById('cs-good').textContent  = sessionStats.good;
+    show('s-complete');
+  } else {
+    updateProgress(); loadCard(idx); updateSkipBadge();
+  }
+}
+
+// ── Spell check ────────────────────────────────────────────────────────────
+function levenClose(a, b, threshold) {
+  if (Math.abs(a.length - b.length) > threshold) return false;
+  const dp = Array.from({length: b.length + 1}, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = i;
+    for (let j = 1; j <= b.length; j++) {
+      const val = a[i-1] === b[j-1] ? dp[j-1] : 1 + Math.min(dp[j-1], dp[j], prev);
+      dp[j-1] = prev; prev = val;
+    }
+    dp[b.length] = prev;
+  }
+  return dp[b.length] <= threshold;
+}
+
+function toggleSpell() {
+  spellOpen = !spellOpen;
+  document.getElementById('spell-actions').style.display = spellOpen ? 'flex' : 'none';
+  if (!spellOpen) {
+    document.getElementById('spell-result').textContent = '';
+    document.getElementById('spell-result').style.display = 'none';
+  }
+  renderFront();
+}
+
+function resetSpell() {
+  spellOpen = false;
+  document.getElementById('spell-result').textContent = '';
+  document.getElementById('spell-result').style.display = 'none';
+  document.getElementById('spell-actions').style.display = 'none';
+  // renderFront() called by loadCard immediately after
+}
+
+function clearSpell() {
+  document.querySelectorAll('.spell-slot').forEach(inp => {
+    inp.value = '';
+    inp.className = 'kw-pill spell-slot';
+  });
+  document.getElementById('spell-result').textContent = '';
+  document.getElementById('spell-result').style.display = 'none';
+}
+
+function checkSpelling() {
+  const slots  = [...document.querySelectorAll('.spell-slot')];
+  const typed  = slots.map(el => el.value.trim());
+
+  // Spell slots correspond to hidden keywords: shuffledKw[shownCount..end]
+  const targets = shuffledKw.slice(shownCount);
+  const used    = new Array(targets.length).fill(false);
+  const matched = new Array(slots.length).fill(null);
+
+  function score(inp, kw) {
+    const a = inp.toLowerCase(), b = kw.toLowerCase();
+    if (a === b) return 0;
+    if (levenClose(a, b, 2)) return 1;
+    return Infinity;
+  }
+
+  const scores = typed.map(t => targets.map(kw => score(t, kw)));
+  // Process best-scoring inputs first (exact matches take priority)
+  const order = typed.map((_, i) => i).sort((a, b) =>
+    Math.min(...scores[a]) - Math.min(...scores[b])
+  );
+  for (const i of order) {
+    let bestJ = -1, bestScore = Infinity;
+    for (let j = 0; j < targets.length; j++) {
+      if (!used[j] && scores[i][j] < bestScore) { bestScore = scores[i][j]; bestJ = j; }
+    }
+    if (bestJ >= 0 && bestScore < Infinity) { matched[i] = bestJ; used[bestJ] = true; }
+  }
+
+  let correct = 0;
+  slots.forEach((inp, i) => {
+    if (typed[i] === '') { inp.className = 'kw-pill spell-slot'; return; }
+    if (matched[i] !== null) { inp.className = 'kw-pill spell-slot correct'; correct++; }
+    else                     { inp.className = 'kw-pill spell-slot wrong'; }
+  });
+
+  const filled   = typed.filter(t => t !== '').length;
+  const total    = targets.length;
+  const resultEl = document.getElementById('spell-result');
+  if (filled === 0) {
+    resultEl.textContent = '';
+    resultEl.style.display = 'none';
+  } else {
+    resultEl.textContent = correct === total
+      ? `✓ All ${total} correct!`
+      : `${correct} / ${filled} matched (${total} keywords remaining)`;
+    resultEl.style.display = 'block';
+  }
+}
+
+// ── Progress ───────────────────────────────────────────────────────────────
+function updateProgress() {
+  const total = deck.length;
+  const done  = idx;
+  const pct   = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('prog-text').textContent = `${done} / ${total}`;
+  document.getElementById('prog-pct').textContent  = pct + '%';
+  document.getElementById('prog-fill').style.width = pct + '%';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════════════════════
+initTheme();
+showHome();
+</script>
+</body>
+</html>

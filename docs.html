@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>⚡ Flash — Documentation</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --pink:   #FF2D87;
+  --purple: #7C3AFF;
+  --mint:   #00D68F;
+  --amber:  #FFB800;
+  --blue:   #00B4FF;
+  --bg:     #0A0A1E;
+  --bg2:    #12122C;
+  --bg3:    #1A1A3C;
+  --text:   #E8E4FF;
+  --text2:  #8886AA;
+  --border: rgba(124,58,255,0.25);
+  --mono:   'IBM Plex Mono', monospace;
+  --sans:   'Inter', sans-serif;
+  --display:'Syne', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  font-size: 15px;
+}
+
+.back-to-app {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 18px; border-radius: 100px;
+  background: rgba(124,58,255,.12); color: var(--purple);
+  text-decoration: none; font-size: .83rem; font-weight: 600;
+  border: 1px solid rgba(124,58,255,.30);
+  transition: background .15s, transform .15s;
+  margin-bottom: 28px; margin-top: 4px;
+  display: inline-flex;
+}
+.back-to-app:hover { background: rgba(124,58,255,.22); transform: translateX(-2px); }
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+
+.layout { display: flex; min-height: 100vh; }
+
+/* Sidebar */
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  padding: 32px 0;
+  overflow-y: auto;
+  z-index: 100;
+}
+.sidebar-logo {
+  font-family: var(--display);
+  font-size: 1.3rem; font-weight: 800;
+  padding: 0 24px 28px;
+  background: linear-gradient(135deg, var(--purple), var(--pink));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 20px;
+  display: block;
+}
+.nav-section {
+  padding: 0 16px 8px;
+  font-size: .65rem; font-weight: 600; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text2);
+  margin-top: 16px;
+}
+.nav-link {
+  display: block; padding: 7px 24px;
+  color: var(--text2); text-decoration: none;
+  font-size: .85rem; font-weight: 500;
+  border-left: 2px solid transparent;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.nav-link:hover { color: var(--text); background: rgba(124,58,255,.08); }
+.nav-link.active { color: var(--purple); border-left-color: var(--purple); background: rgba(124,58,255,.10); }
+
+/* Main content */
+.main {
+  margin-left: 240px;
+  flex: 1;
+  max-width: 860px;
+  padding: 56px 56px 100px;
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────── */
+
+h1, h2, h3, h4 { font-family: var(--display); font-weight: 800; }
+
+h1 {
+  font-size: 2.8rem; line-height: 1.1;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, var(--purple) 0%, var(--pink) 60%, var(--amber) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+h2 {
+  font-size: 1.5rem; margin: 56px 0 20px;
+  color: var(--text);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: 32px;
+}
+h2::before { content: '# '; color: var(--purple); font-size: .9em; }
+h3 { font-size: 1.05rem; color: var(--text); margin: 28px 0 10px; }
+h3::before { content: '## '; color: var(--text2); font-size: .8em; }
+
+p { margin-bottom: 14px; color: var(--text); }
+a { color: var(--purple); text-decoration: none; }
+a:hover { text-decoration: underline; }
+strong { color: var(--text); font-weight: 600; }
+
+/* ── Hero ────────────────────────────────────────────────────────────────── */
+
+.hero {
+  padding: 0 0 40px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.hero-sub {
+  font-size: 1rem; color: var(--text2); max-width: 540px; margin-bottom: 28px;
+}
+.badge-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.badge {
+  padding: 4px 12px; border-radius: 100px; font-size: .75rem; font-weight: 600;
+  font-family: var(--mono);
+}
+.b-purple { background: rgba(124,58,255,.18); color: var(--purple); border: 1px solid rgba(124,58,255,.3); }
+.b-pink   { background: rgba(255,45,135,.18); color: var(--pink);   border: 1px solid rgba(255,45,135,.3); }
+.b-mint   { background: rgba(0,214,143,.18);  color: var(--mint);   border: 1px solid rgba(0,214,143,.3); }
+.b-amber  { background: rgba(255,184,0,.18);  color: var(--amber);  border: 1px solid rgba(255,184,0,.3); }
+.b-blue   { background: rgba(0,180,255,.18);  color: var(--blue);   border: 1px solid rgba(0,180,255,.3); }
+
+/* ── Callouts ─────────────────────────────────────────────────────────────── */
+
+.callout {
+  border-radius: 12px; padding: 16px 20px;
+  margin: 20px 0; font-size: .9rem;
+  border-left: 3px solid;
+}
+.callout-info    { background: rgba(0,180,255,.08);  border-color: var(--blue);   }
+.callout-warn    { background: rgba(255,184,0,.08);  border-color: var(--amber);  }
+.callout-danger  { background: rgba(255,45,135,.08); border-color: var(--pink);   }
+.callout-success { background: rgba(0,214,143,.08);  border-color: var(--mint);   }
+.callout-label   { font-weight: 700; font-size: .75rem; text-transform: uppercase;
+                   letter-spacing: .08em; margin-bottom: 4px; }
+.callout-info    .callout-label { color: var(--blue); }
+.callout-warn    .callout-label { color: var(--amber); }
+.callout-danger  .callout-label { color: var(--pink); }
+.callout-success .callout-label { color: var(--mint); }
+
+/* ── Steps ───────────────────────────────────────────────────────────────── */
+
+.steps { counter-reset: step; margin: 0; padding: 0; list-style: none; }
+.step {
+  display: flex; gap: 20px; padding: 20px 0;
+  border-bottom: 1px solid rgba(124,58,255,.1);
+  counter-increment: step;
+}
+.step:last-child { border-bottom: none; }
+.step-num {
+  flex-shrink: 0;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--purple), var(--pink));
+  color: #fff; font-weight: 800; font-family: var(--display);
+  display: flex; align-items: center; justify-content: center;
+  font-size: .9rem;
+}
+.step-body h4 { font-size: .95rem; color: var(--text); margin-bottom: 6px; }
+.step-body p  { font-size: .88rem; color: var(--text2); margin: 0; }
+
+/* ── Code blocks ─────────────────────────────────────────────────────────── */
+
+pre {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+  overflow-x: auto;
+  margin: 16px 0;
+  font-family: var(--mono);
+  font-size: .82rem;
+  line-height: 1.65;
+  position: relative;
+}
+pre .label {
+  position: absolute; top: 10px; right: 14px;
+  font-size: .65rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--text2);
+}
+code {
+  font-family: var(--mono); font-size: .85em;
+  background: var(--bg3); padding: 1px 6px; border-radius: 4px;
+  color: var(--mint);
+}
+pre code { background: none; padding: 0; color: var(--text); }
+
+.kw  { color: var(--purple); }
+.fn  { color: var(--blue); }
+.str { color: var(--mint); }
+.cm  { color: var(--text2); font-style: italic; }
+.num { color: var(--amber); }
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+
+table {
+  width: 100%; border-collapse: collapse; margin: 16px 0;
+  font-size: .87rem;
+}
+th {
+  text-align: left; padding: 10px 14px;
+  background: var(--bg3); color: var(--text2);
+  font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .06em;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(124,58,255,.08);
+  color: var(--text);
+  vertical-align: top;
+}
+tr:last-child td { border-bottom: none; }
+td code { font-size: .82rem; }
+.td-user   { color: var(--mint); font-weight: 600; }
+.td-auto   { color: var(--text2); }
+.td-center { text-align: center; }
+
+/* ── Architecture diagram ────────────────────────────────────────────────── */
+
+.arch {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 14px; padding: 28px;
+  margin: 20px 0; display: flex;
+  align-items: stretch; gap: 0;
+  overflow: hidden;
+}
+.arch-box {
+  flex: 1; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px 16px; text-align: center;
+}
+.arch-box-title {
+  font-family: var(--mono); font-size: .78rem; font-weight: 600;
+  color: var(--purple); margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.arch-box-items { font-size: .78rem; color: var(--text2); line-height: 1.8; }
+.arch-arrow {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 12px; color: var(--text2); font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+/* ── Rating row ──────────────────────────────────────────────────────────── */
+
+.rating-demo {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 10px; margin: 16px 0;
+}
+.rd-btn {
+  border-radius: 10px; padding: 12px 8px;
+  text-align: center; font-weight: 700; font-size: .85rem; color: #fff;
+}
+.rd-again  { background: var(--pink); }
+.rd-hard   { background: #FF7A00; }
+.rd-good   { background: var(--purple); }
+.rd-easy   { background: #00A870; }
+.rd-sub    { font-size: .68rem; opacity: .85; margin-top: 3px; font-weight: 400; }
+
+/* ── File tree ───────────────────────────────────────────────────────────── */
+
+.tree {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 10px; padding: 18px 20px;
+  font-family: var(--mono); font-size: .84rem; line-height: 1.9;
+  margin: 16px 0;
+}
+.tree .dir  { color: var(--purple); font-weight: 600; }
+.tree .file { color: var(--text); }
+.tree .note { color: var(--text2); }
+
+/* ── Keyword mapping table ───────────────────────────────────────────────── */
+
+.kw-map {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px; margin: 16px 0;
+}
+.kw-cell {
+  border-radius: 10px; padding: 14px 12px; text-align: center;
+  border: 1px solid var(--border); font-size: .84rem;
+}
+.kw-shown { font-weight: 700; font-size: 1.1rem; margin-bottom: 4px; }
+.kw-label { font-size: .72rem; color: var(--text2); margin-bottom: 8px; }
+.kw-rating { font-weight: 700; font-size: .8rem; }
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg2); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+@media (max-width: 780px) {
+  .sidebar { display: none; }
+  .main { margin-left: 0; padding: 32px 20px 80px; }
+  h1 { font-size: 2rem; }
+  .arch { flex-direction: column; }
+  .arch-arrow { transform: rotate(90deg); padding: 8px 0; }
+  .kw-map { grid-template-columns: 1fr 1fr; }
+  .rating-demo { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <span class="sidebar-logo">⚡ Flash Docs</span>
+
+  <div class="nav-section">Overview</div>
+  <a class="nav-link active" href="#overview">What is this</a>
+  <a class="nav-link" href="#architecture">Architecture</a>
+  <a class="nav-link" href="#files">Files</a>
+
+  <div class="nav-section">Setup</div>
+  <a class="nav-link" href="#setup-sheet">1. Create Sheet</a>
+  <a class="nav-link" href="#setup-gas">2. Apps Script</a>
+  <a class="nav-link" href="#setup-init">3. Init Sheet</a>
+  <a class="nav-link" href="#setup-deploy">4. Deploy</a>
+
+  <div class="nav-section">Cards</div>
+  <a class="nav-link" href="#schema">Sheet Schema</a>
+  <a class="nav-link" href="#back-types">Back Card Types</a>
+  <a class="nav-link" href="#drive-images">Drive Images</a>
+
+  <div class="nav-section">Using the App</div>
+  <a class="nav-link" href="#session">Review Session</a>
+  <a class="nav-link" href="#keywords">Keyword Reveal</a>
+  <a class="nav-link" href="#spell">Spell Check</a>
+  <a class="nav-link" href="#rating">Rating & FSRS</a>
+
+  <div class="nav-section">Algorithm</div>
+  <a class="nav-link" href="#fsrs">FSRS v5</a>
+  <a class="nav-link" href="#states">Card States</a>
+
+  <div class="nav-section">Troubleshooting</div>
+  <a class="nav-link" href="#debug">Common Issues</a>
+</nav>
+
+<!-- Main -->
+<main class="main">
+
+<!-- ── Hero ────────────────────────────────────────────────────────────── -->
+<section id="overview" class="hero">
+  <h1>⚡ Flash</h1>
+  <p class="hero-sub">
+    Spaced-repetition flashcard app running entirely on Google Apps Script.
+    No server, no install — one URL works on desktop and mobile.
+  </p>
+  <div class="badge-row">
+    <span class="badge b-purple">FSRS v5</span>
+    <span class="badge b-blue">Google Apps Script</span>
+    <span class="badge b-mint">Google Sheets DB</span>
+    <!--span class="badge b-amber">CJK Support (JP/KR/SC)</span-->
+    <span class="badge b-pink">text · md · html cards</span>
+  </div>
+</section>
+
+<!-- ── Architecture ──────────────────────────────────────────────────── -->
+<h2 id="architecture">Architecture</h2>
+
+<div class="arch">
+  <div class="arch-box">
+    <div class="arch-box-title">Google Sheet</div>
+    <div class="arch-box-items">
+      Tab: <strong>cards</strong><br>
+      14 columns<br>
+      User adds cards<br>
+      FSRS auto-fills
+    </div>
+  </div>
+  <div class="arch-arrow">⇄</div>
+  <div class="arch-box">
+    <div class="arch-box-title">Code.gs</div>
+    <div class="arch-box-items">
+      GAS backend<br>
+      getDueCards()<br>
+      updateCard()<br>
+      getStats()
+    </div>
+  </div>
+  <div class="arch-arrow">⇄</div>
+  <div class="arch-box">
+    <div class="arch-box-title">index.html</div>
+    <div class="arch-box-items">
+      SPA frontend<br>
+      FSRS v5 in JS<br>
+      Title + keyword reveal<br>
+      Spell check<br>
+      Dark / Light mode
+    </div>
+  </div>
+</div>
+
+<div class="callout callout-info">
+  <div class="callout-label">How it connects</div>
+  The browser calls GAS server functions via <code>google.script.run</code>.
+  This only works when the page is served from the <strong>/exec deployment URL</strong> —
+  never when the HTML file is opened directly from Drive.
+</div>
+
+<!-- ── Files ──────────────────────────────────────────────────────────── -->
+<h2 id="files">Files</h2>
+
+<div class="tree">
+  <span class="dir">Apps Script project/</span><br>
+  &nbsp;&nbsp;<span class="file">Code.gs</span>
+    <span class="note">← GAS backend: sheet R/W, doGet, FSRS field write-back</span><br>
+  &nbsp;&nbsp;<span class="file">index.html</span>
+    <span class="note">← Full SPA: FSRS v5 JS, UI, card flip, keyword reveal</span>
+</div>
+
+<table>
+  <thead><tr><th>File</th><th>Purpose</th><th>Edit?</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>Code.gs</code></td>
+      <td>Server-side Google Apps Script. Reads and writes the Sheet. Serves index.html.</td>
+      <td>Rarely — only to change sheet tab name or add functions</td>
+    </tr>
+    <tr>
+      <td><code>index.html</code></td>
+      <td>Entire frontend in one file. Contains CSS, HTML, and FSRS v5 JavaScript.</td>
+      <td>To tweak UI, colors, or FSRS W parameters</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ── Setup ──────────────────────────────────────────────────────────── -->
+<h2 id="setup-sheet">Step 1 — Create a Google Spreadsheet</h2>
+
+<ol class="steps">
+  <li class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Open Google Drive</h4>
+      <p>Go to <a href="https://drive.google.com" target="_blank">drive.google.com</a> → New → Google Sheets. Give it any name, e.g. <em>Flash Cards</em>.</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Note the Spreadsheet ID</h4>
+      <p>The URL looks like <code>https://docs.google.com/spreadsheets/d/<strong>SPREADSHEET_ID</strong>/edit</code>. You don't need to use this ID directly — just keep the sheet open.</p>
+    </div>
+  </li>
+</ol>
+
+<h2 id="setup-gas">Step 2 — Create the Apps Script Project</h2>
+
+<ol class="steps">
+  <li class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Open Apps Script editor</h4>
+      <p>In your spreadsheet: <strong>Extensions → Apps Script</strong>. A new tab opens with the editor.</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Paste Code.gs</h4>
+      <p>Click the default file (usually <em>Code.gs</em>). Delete everything and paste the full contents of <code>Code.gs</code>.</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>Create index.html</h4>
+      <p>Click <strong>+ (New file) → HTML</strong>. Name it exactly <code>index</code> (no extension — GAS adds .html automatically). Delete everything and paste the full contents of <code>index.html</code>.</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h4>Save both files</h4>
+      <p>Cmd/Ctrl+S or click the floppy disk icon. Both files must be saved before deploying.</p>
+    </div>
+  </li>
+</ol>
+
+<h2 id="setup-init">Step 3 — Initialize the Sheet</h2>
+
+<ol class="steps">
+  <li class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Run setupSheet()</h4>
+      <p>In the editor, select <code>setupSheet</code> from the function dropdown → click ▶ Run. Accept any permission dialogs (this only runs once).</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Verify the sheet</h4>
+      <p>Switch to your Spreadsheet. A tab named <strong>cards</strong> should appear with 14 purple header columns.</p>
+    </div>
+  </li>
+</ol>
+
+<div class="callout callout-warn">
+  <div class="callout-label">Important</div>
+  If you skip <code>setupSheet()</code> and create the sheet manually, make sure all 14 column headers exist.
+  Missing FSRS headers cause silent write failures. The app will auto-add any missing ones on first review,
+  but it's cleaner to run setup first.
+</div>
+
+<h2 id="setup-deploy">Step 4 — Deploy as Web App</h2>
+
+<ol class="steps">
+  <li class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Click Deploy → New deployment</h4>
+      <p>In the Apps Script editor top-right: <strong>Deploy → New deployment</strong>.</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Configure settings</h4>
+      <p>Select type: <strong>Web app</strong>. Execute as: <strong>Me</strong>. Who has access: <strong>Only myself</strong>.</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>Copy the /exec URL</h4>
+      <p>After deploy, copy the URL ending in <code>/exec</code>. Bookmark this on every device. This is the only URL the app works from.</p>
+    </div>
+  </li>
+</ol>
+
+<div class="callout callout-danger">
+  <div class="callout-label">Critical</div>
+  Always use the <code>/exec</code> URL — never open <code>index.html</code> directly from Drive.
+  <code>google.script.run</code> (the bridge between frontend and sheet) only works when the page
+  is served by GAS. Opening the file directly gives a broken page that looks fine but never saves.
+</div>
+
+<div class="callout callout-success">
+  <div class="callout-label">After code changes</div>
+  Each time you edit anything in the apps script, a <strong>new deployment</strong> is required:
+  New deployment (Deploy → New deployment) changes the URL each time; New version (Deploy → Manage deployments → Edit Version) reuses the same URL. Or use "Test deployments" during development
+  — those always reflect the latest saved code.
+</div>
+
+<!-- ── Schema ──────────────────────────────────────────────────────────── -->
+<h2 id="schema">Sheet Schema</h2>
+
+<p>The <strong>cards</strong> tab has 14 columns. You fill the first 5 for each card; the rest are managed automatically.</p>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Column</th><th>You fill</th><th>Auto-filled</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td><code>id</code></td>         <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>Any unique string. e.g. <code>card_001</code></td></tr>
+    <tr><td>2</td><td><code>title</code></td>       <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>Short prompt shown first before any hints. Optional but recommended.</td></tr>
+    <tr><td>3</td><td><code>keywords</code></td>    <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>Semicolons or commas: <code>cat;feline;pet</code></td></tr>
+    <tr><td>4</td><td><code>back_content</code></td><td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>The answer text, Markdown, or HTML</td></tr>
+    <tr><td>5</td><td><code>back_type</code></td>   <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td><code>text</code> · <code>md</code> · <code>html</code></td></tr>
+    <tr><td>6</td><td><code>due</code></td>          <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Leave blank for new cards</td></tr>
+    <tr><td>7</td><td><code>stability</code></td>    <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>FSRS memory stability</td></tr>
+    <tr><td>8</td><td><code>difficulty</code></td>   <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>FSRS card difficulty (1–10)</td></tr>
+    <tr><td>9</td><td><code>elapsed_days</code></td> <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Days since last review</td></tr>
+    <tr><td>10</td><td><code>scheduled_days</code></td><td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Interval length</td></tr>
+    <tr><td>11</td><td><code>reps</code></td>        <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Total review count</td></tr>
+    <tr><td>12</td><td><code>lapses</code></td>      <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Times rated Again in Review state</td></tr>
+    <tr><td>13</td><td><code>state</code></td>       <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>0=New 1=Learning 2=Review 3=Relearning</td></tr>
+    <tr><td>14</td><td><code>last_review</code></td> <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>ISO timestamp of last review</td></tr>
+  </tbody>
+</table>
+
+<!-- ── Back types ──────────────────────────────────────────────────────── -->
+<h2 id="back-types">Back Card Types</h2>
+
+<h3>back_type = text</h3>
+<p>Plain text, whitespace preserved. Best for short definitions.</p>
+<pre>
+Prunus serrulata
+Japanese flowering cherry.
+Blooms ~2 weeks, late March to early April.</pre>
+
+<h3>back_type = md</h3>
+<p>Standard Markdown rendered via marked.js. Supports headings, lists, bold, italic, tables, code, blockquotes, and image syntax.</p>
+<pre>
+## 桜 Cherry Blossom
+- **Species:** *Prunus serrulata*
+- **Season:** Late March – early April (Tokyo)
+- Hanami (花見): tradition of picnicking under blooms
+
+> 散る桜 残る桜も 散る桜
+</pre>
+
+<h3>back_type = html</h3>
+<p>Raw HTML injected directly. Full control over layout, images, and styles.</p>
+<pre>
+&lt;h2&gt;桜&lt;/h2&gt;
+&lt;img src="https://drive.google.com/uc?export=view&amp;id=FILE_ID"
+     style="max-width:100%;border-radius:12px"&gt;
+&lt;p&gt;&lt;em&gt;Prunus serrulata&lt;/em&gt; — transient beauty (物の哀れ).&lt;/p&gt;
+&lt;ul&gt;
+  &lt;li&gt;Blooms ~2 weeks&lt;/li&gt;
+  &lt;li&gt;Symbol of mono no aware&lt;/li&gt;
+&lt;/ul&gt;
+</pre>
+
+<!-- ── Drive images ────────────────────────────────────────────────────── -->
+<h2 id="drive-images">Drive Images in HTML Cards</h2>
+
+<ol class="steps">
+  <li class="step">
+    <div class="step-num">1</div>
+    <div class="step-body">
+      <h4>Upload image to Drive</h4>
+      <p>Drag the image into any Drive folder.</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">2</div>
+    <div class="step-body">
+      <h4>Share with "Anyone with the link"</h4>
+      <p>Right-click → Share → Change to "Anyone with the link" (Viewer).</p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">3</div>
+    <div class="step-body">
+      <h4>Copy the File ID</h4>
+      <p>From the sharing URL: <code>https://drive.google.com/file/d/<strong>FILE_ID</strong>/view</code></p>
+    </div>
+  </li>
+  <li class="step">
+    <div class="step-num">4</div>
+    <div class="step-body">
+      <h4>Use in HTML back card</h4>
+      <pre style="margin:6px 0"><code>&lt;img src="https://drive.google.com/uc?export=view&amp;id=<span class="str">FILE_ID</span>"&gt;</code></pre>
+    </div>
+  </li>
+</ol>
+
+<!-- ── Session ────────────────────────────────────────────────────────── -->
+<h2 id="session">Review Session</h2>
+
+<p>Open the <code>/exec</code> URL. The home screen shows today's due count. Hit <strong>Start Review</strong>.</p>
+
+<p>Each session goes through all cards due today in order (most overdue first, new cards last). A progress bar tracks completion. When all cards are rated, a summary screen shows totals.</p>
+
+<!-- ── Keywords ────────────────────────────────────────────────────────── -->
+<h2 id="keywords">Keyword Reveal Mechanic</h2>
+
+<p>When a card loads, the front shows only the <strong>title</strong> — no keyword pills are visible yet. Ghost placeholder pills show how many keywords exist.</p>
+
+<p>Click <strong>＋ Hint</strong> to reveal one keyword per click. The hint picker avoids revealing keywords you have already attempted in Spell Check (see below). Click <strong>↩ Flip</strong> at any point to see the answer on the back.</p>
+
+<p>The number of hints needed determines the suggested rating:</p>
+
+<div class="kw-map">
+  <div class="kw-cell" style="border-color:rgba(0,214,143,.3)">
+    <div class="kw-shown" style="color:var(--mint)">0 hints</div>
+    <div class="kw-label">Flipped without any hint</div>
+    <div class="kw-rating" style="color:var(--mint)">→ Easy (4)</div>
+  </div>
+  <div class="kw-cell" style="border-color:rgba(124,58,255,.3)">
+    <div class="kw-shown" style="color:var(--purple)">1+ hints</div>
+    <div class="kw-label">At least one hint needed</div>
+    <div class="kw-rating" style="color:var(--purple)">→ Good (3)</div>
+  </div>
+  <div class="kw-cell" style="border-color:rgba(255,122,0,.3)">
+    <div class="kw-shown" style="color:#FF7A00">&gt;50%</div>
+    <div class="kw-label">More than half shown</div>
+    <div class="kw-rating" style="color:#FF7A00">→ Hard (2)</div>
+  </div>
+  <div class="kw-cell" style="border-color:rgba(255,45,135,.3)">
+    <div class="kw-shown" style="color:var(--pink)">n / n</div>
+    <div class="kw-label">All keywords shown</div>
+    <div class="kw-rating" style="color:var(--pink)">→ Again (1)</div>
+  </div>
+  <div class="kw-cell" style="border-color:rgba(255,184,0,.3)">
+    <div class="kw-shown" style="color:var(--amber)">1 / 1</div>
+    <div class="kw-label">Single keyword card</div>
+    <div class="kw-rating" style="color:var(--amber)">→ Rate manually</div>
+  </div>
+</div>
+
+<p>The suggested button is highlighted with a white outline. You can always override by clicking any other rating button.</p>
+
+<!-- ── Spell Check ─────────────────────────────────────────────────────── -->
+<h2 id="spell">Spell Check</h2>
+
+<p>Click <strong>✎ Spell</strong> on the front card to enter spell-check mode. The ghost placeholder pills turn into text input fields — one per hidden keyword.</p>
+
+<p>Type your guesses in any order, then click <strong>✔ Check</strong> (or press Enter in any field). The app finds the best keyword match for each input using fuzzy matching (Levenshtein distance ≤ 2), so minor typos are forgiven. Inputs turn <span style="color:var(--mint);font-weight:700">green</span> for a match, <span style="color:var(--pink);font-weight:700">red</span> for no match.</p>
+
+<div class="callout callout-info">
+  <div class="callout-label">Order doesn't matter</div>
+  Keywords are matched globally across all inputs. You can type them in any order — the app assigns each input to the keyword it fits best.
+</div>
+
+<p><strong>✔ Check</strong> — evaluates all inputs and highlights results.<br>
+<strong>✕ Clear</strong> — clears all inputs and resets highlighting.<br>
+<strong>✎ Spell</strong> (toggle off) — exits spell mode and restores ghost pills, discarding inputs.</p>
+
+<div class="callout callout-warn">
+  <div class="callout-label">Hint interaction</div>
+  When you click <strong>＋ Hint</strong> while spell mode is active, the app picks a keyword that is <em>unlike</em> anything you have already typed (edit-distance &gt; 2). This prevents hints from revealing words you have already attempted, keeping the challenge fair.
+</div>
+
+<p>Already-revealed hint pills (shown in color) are not spell-check targets — only the remaining hidden slots are checked.</p>
+
+<!-- ── Rating ─────────────────────────────────────────────────────────── -->
+<h2 id="rating">Rating Buttons</h2>
+
+<p>After flipping, rate how well you recalled the card. Each button shows the next review interval:</p>
+
+<div class="rating-demo">
+  <div class="rd-btn rd-again">Again<div class="rd-sub">10m</div></div>
+  <div class="rd-btn rd-hard">Hard<div class="rd-sub">1h</div></div>
+  <div class="rd-btn rd-good">Good<div class="rd-sub">3d</div></div>
+  <div class="rd-btn rd-easy">Easy<div class="rd-sub">15d</div></div>
+</div>
+
+<p>Intervals are computed by FSRS v5 before you rate, so you can see the consequence of each choice before clicking. Actual values depend on the card's history.</p>
+
+<!-- ── FSRS ────────────────────────────────────────────────────────────── -->
+<h2 id="fsrs">FSRS v5 Algorithm</h2>
+
+<p>
+  <a href="https://github.com/open-spaced-repetition/py-fsrs" target="_blank">FSRS v5</a>
+  (Free Spaced Repetition Scheduler) is the algorithm used by Anki since 2023.
+  It models memory using three variables:
+</p>
+
+<table>
+  <thead><tr><th>Variable</th><th>Meaning</th><th>Range</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Stability (S)</strong></td><td>Days until retrievability drops to 90%</td><td>0.1 → ∞</td></tr>
+    <tr><td><strong>Difficulty (D)</strong></td><td>Intrinsic card hardness</td><td>1 → 10</td></tr>
+    <tr><td><strong>Retrievability (R)</strong></td><td>Probability of recall right now</td><td>0 → 1</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Forgetting curve:</strong></p>
+<pre>R(t, S) = (1 + 0.2346 × t / S)<sup>−0.5</sup></pre>
+
+<p>At t = S days, R = 0.90 — that's the 90% retention target baked into the constants.</p>
+
+<p>The W parameters (19 values) are the default from the open-spaced-repetition project. To personalize them, run <a href="https://github.com/open-spaced-repetition/fsrs-optimizer" target="_blank">fsrs-optimizer</a> on your review log and replace the <code>W</code> array at the top of the <code>&lt;script&gt;</code> block in <code>index.html</code>.</p>
+
+<!-- ── States ──────────────────────────────────────────────────────────── -->
+<h2 id="states">Card States</h2>
+
+<table>
+  <thead><tr><th>State</th><th>Value</th><th>Meaning</th><th>Next interval</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><span class="badge b-blue">New</span></td>
+      <td>0</td>
+      <td>Never reviewed. Blank FSRS fields.</td>
+      <td>Good/Easy→1+ days; Again/Hard→enters Learning (10 min / 1 h)</td>
+    </tr>
+    <tr>
+      <td><span class="badge b-amber">Learning</span></td>
+      <td>1</td>
+      <td>First few reviews. Building initial stability.</td>
+      <td>Again→10 min, Hard→1 h, Good/Easy→graduates to Review</td>
+    </tr>
+    <tr>
+      <td><span class="badge b-purple">Review</span></td>
+      <td>2</td>
+      <td>Graduated. Scheduled by FSRS interval.</td>
+      <td>Days–months based on stability</td>
+    </tr>
+    <tr>
+      <td><span class="badge b-pink">Relearning</span></td>
+      <td>3</td>
+      <td>Lapsed (rated Again while in Review). Relearning.</td>
+      <td>Again→10 min, Hard→1 h, Good/Easy→back to Review</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>State is shown as a colored badge in the top-right of the front card face.</p>
+
+<!-- ── Debug ───────────────────────────────────────────────────────────── -->
+<h2 id="debug">Common Issues</h2>
+
+<table>
+  <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Sheet never updates after rating</td>
+      <td>Page opened from Drive, not <code>/exec</code> URL</td>
+      <td>Always use the deployment <code>/exec</code> URL</td>
+    </tr>
+    <tr>
+      <td><code>google.script.run is not defined</code></td>
+      <td>Same as above</td>
+      <td>Same fix — use the <code>/exec</code> URL</td>
+    </tr>
+    <tr>
+      <td>FSRS columns are blank after review</td>
+      <td>Column headers missing from sheet</td>
+      <td>Run <code>setupSheet()</code> once, or add missing headers manually. App auto-adds them on next review.</td>
+    </tr>
+    <tr>
+      <td>Card doesn't flip back between cards</td>
+      <td>CSS <code>.flipped</code> class not removed</td>
+      <td>Ensure <code>loadCard()</code> calls <code>card3d.classList.remove('flipped')</code></td>
+    </tr>
+    <tr>
+      <td>Markdown not rendering</td>
+      <td>marked.js CDN failed to load</td>
+      <td>Check browser console; ensure CDN access. Fallback: self-host marked.min.js in a Drive-served script</td>
+    </tr>
+    <tr>
+      <td>Home screen shows 0 cards but sheet has cards</td>
+      <td>Sheet name mismatch or no <code>id</code> column</td>
+      <td>Sheet tab must be named exactly <strong>cards</strong>; every row must have a non-blank <code>id</code></td>
+    </tr>
+    <tr>
+      <td>Redeploying after code changes has no effect</td>
+      <td>GAS caches the previous deployment</td>
+      <td>Deploy → <strong>New deployment</strong> (not "Manage deployments"). Old <code>/exec</code> URL stays valid but points to old version</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-success">
+  <div class="callout-label">After code changes</div>
+  Each time you edit <code>Code.gs</code> or <code>index.html</code>, a <strong>new deployment</strong>
+  is required. Or use "Test deployments" during development — those always reflect the latest saved code.
+</div>
+
+</main>
+
+<script>
+// Active nav link on scroll
+const sections = document.querySelectorAll('[id]');
+const links = document.querySelectorAll('.nav-link');
+
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      links.forEach(l => l.classList.toggle('active', l.getAttribute('href') === '#' + e.target.id));
+    }
+  });
+}, { rootMargin: '-30% 0px -65% 0px' });
+
+sections.forEach(s => obs.observe(s));
+
+
+// Resolve back-link using server-side URL
+/*
+google.script.run
+  .withSuccessHandler(url => {
+    const link = document.getElementById('backToApp');
+    const m = location.hash.match(/from=([^&]+)/);
+    if (m) {
+      try {
+        const state = JSON.parse(decodeURIComponent(m[1]));
+        link.href = url + '#restore=' + encodeURIComponent(JSON.stringify(state));
+      } catch(e) { link.href = url; }
+    } else {
+      link.href = url;
+    }
+  })
+  .getAppUrl();
+*/
+</script>
+
+</body>
+</html>
