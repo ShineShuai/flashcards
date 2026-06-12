@@ -770,6 +770,13 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p>The W parameters (19 values) are the default from the open-spaced-repetition project. To personalize them, run <a href="https://github.com/open-spaced-repetition/fsrs-optimizer" target="_blank">fsrs-optimizer</a> on your review log and replace the <code>W</code> array at the top of the <code>&lt;script&gt;</code> block in <code>index.html</code>.</p>
 
+<h3>Overdue cap</h3>
+<p>If a card is reviewed much later than scheduled, the elapsed days used for retrievability is capped at <strong>2× the scheduled interval</strong>. This prevents extreme overdue cards from producing unrealistically inflated stability after a correct answer.</p>
+
+<h3>Difficulty fallback</h3>
+<p>If a card has no stored difficulty (e.g. corrupted or manually added row), the scheduler defaults to <code>W[4]</code> (the mean difficulty, ~7.19) rather than deriving it from the current rating. This avoids biasing the card's future scheduling based on a single accidental rating.</p>
+
+
 <!-- ── States ──────────────────────────────────────────────────────────── -->
 <h2 id="states">Card States</h2>
 
@@ -780,7 +787,7 @@ Blooms ~2 weeks, late March to early April.</pre>
       <td><span class="badge b-blue">New</span></td>
       <td>0</td>
       <td>Never reviewed. Blank FSRS fields.</td>
-      <td>Good/Easy→1+ days; Again/Hard→enters Learning (10 min / 1 h)</td>
+      <td>Easy→graduates to Review (1+ days); Good→Learning (1 d); Again/Hard→enters Learning (10 min / 1 h)</td>
     </tr>
     <tr>
       <td><span class="badge b-amber">Learning</span></td>
@@ -798,7 +805,7 @@ Blooms ~2 weeks, late March to early April.</pre>
       <td><span class="badge b-pink">Relearning</span></td>
       <td>3</td>
       <td>Lapsed (rated Again while in Review). Relearning.</td>
-      <td>Again→10 min, Hard→1 h, Good/Easy→back to Review</td>
+      <td>Again→10 min, Hard→1 h, Good/Easy→graduates to Review (≥1 day, or 12h+ if stability is very low)</td>
     </tr>
   </tbody>
 </table>

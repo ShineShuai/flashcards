@@ -591,7 +591,34 @@ function sForget(d, s, r) {
 }
 function sShort(s, g) { return Math.max(s * Math.exp(W[17] * (g - 3 + W[18])), 0.1); }
 function daysBetween(a, b) { return Math.round((b - a) / 86400000); }
-function nextInterval(card, g) { return scheduleCard(card, g).scheduled_days; }
+// #4: lightweight interval-only preview — avoids running full scheduleCard 4× per render
+function nextInterval(card, g) {
+  const state = Number(card.state) || 0;
+  const s     = Math.max(Number(card.stability) || 0.1, 0.1);
+  // #6: neutral difficulty fallback (W[4] = mean difficulty), not rating-dependent
+  const d     = clamp(Number(card.difficulty) || W[4], 1, 10);
+  const lr    = card.last_review ? new Date(card.last_review) : new Date();
+  // #7: cap elapsed at 2× scheduled_days to avoid extreme overdue distortion
+  const rawElapsed = state >= 2 ? Math.max(0, daysBetween(lr, new Date())) : 0;
+  const schStored  = Math.max(Number(card.scheduled_days) || 1, 1);
+  const elapsed    = state >= 2 ? Math.min(rawElapsed, schStored * 2) : 0;
+  const r          = state >= 2 ? forgettingCurve(elapsed, s) : 1;
+  if (state === 0) {
+    const ns = initS(g);
+    if (g <= 2)      return LEARNING_STEPS[0];
+    else if (g === 3) return LEARNING_STEPS[1];
+    else             return Math.max(1, Math.round(ns));
+  }
+  if (state === 1 || state === 3) {
+    const ns = sShort(s, g);
+    if (g === 1) return LEARNING_STEPS[0];
+    if (g === 2) return LEARNING_STEPS[1];
+    return Math.max(1, Math.round(ns));
+  }
+  // state === 2 (Review)
+  if (g === 1) return 0;
+  return Math.max(1, Math.round(Math.max(sRecall(d, s, r, g), 0.1)));
+}
 function formatInterval(days) {
   if (days < 1 / 1440) return '<1m';
   if (days < 1 / 24)   return Math.round(days * 1440) + 'm';
@@ -604,15 +631,21 @@ function scheduleCard(card, rating) {
   const now     = new Date();
   const state   = Number(card.state) || 0;
   const lr      = card.last_review ? new Date(card.last_review) : now;
-  const elapsed = state >= 2 ? Math.max(0, daysBetween(lr, now)) : 0;
+  // #7: cap elapsed at 2× scheduled_days to avoid extreme overdue distortion
+  const rawElapsed = state >= 2 ? Math.max(0, daysBetween(lr, now)) : 0;
+  const schStored  = Math.max(Number(card.scheduled_days) || 1, 1);
+  const elapsed    = state >= 2 ? Math.min(rawElapsed, schStored * 2) : 0;
   const s       = Math.max(Number(card.stability) || 0.1, 0.1);
-  const d       = clamp(Number(card.difficulty) || initD(rating), 1, 10);
+  // #6: neutral difficulty fallback (W[4] = mean difficulty), not rating-dependent
+  const d       = clamp(Number(card.difficulty) || W[4], 1, 10);
   const r       = state >= 2 ? forgettingCurve(elapsed, s) : 1;
   let newS, newD, newState, schDays;
   if (state === 0) {                  // ── New ──
     newD = initD(rating); newS = initS(rating);
-    if (rating <= 2) { newState = 1; schDays = 0; }
-    else             { newState = 2; schDays = Math.max(1, Math.round(newS)); }
+    // #1 + #2: Again/Hard → Learning step 0; Good → Learning step 1; Easy only graduates
+    if (rating <= 2)      { newState = 1; schDays = LEARNING_STEPS[0]; }
+    else if (rating === 3){ newState = 1; schDays = LEARNING_STEPS[1]; }
+    else                  { newState = 2; schDays = Math.max(1, Math.round(newS)); }
   } else if (state === 1) {           // ── Learning ──
     newD = nextD(d, rating); newS = sShort(s, rating);
     if (rating === 1)      { newState = 1; schDays = LEARNING_STEPS[0]; } // Again → 10 min
