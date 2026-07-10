@@ -173,7 +173,7 @@ body::before {
 }
 .btn-spell:hover:not(:disabled) { background: rgba(0,214,143,.08); }
 .rating-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   gap: 8px; margin-top: 18px;
 }
 .btn-rate {
@@ -189,6 +189,7 @@ body::before {
   display: block; font-size: .65rem; font-weight: 400; opacity: .85; margin-top: 2px;
 }
 .btn-again { background: #FF2D87; box-shadow: 0 3px 14px rgba(255,45,135,.40); }
+.btn-recap { background: #FFB000; box-shadow: 0 3px 14px rgba(255,176,0,.40); }
 .btn-hard  { background: #FF7A00; box-shadow: 0 3px 14px rgba(255,122,0,.40); }
 .btn-good  { background: #7C3AFF; box-shadow: 0 3px 14px rgba(124,58,255,.40); }
 .btn-easy  { background: #00A870; box-shadow: 0 3px 14px rgba(0,168,112,.40); }
@@ -368,10 +369,11 @@ body::before {
 #docs-modal { position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column; }
 #docs-content { flex: 1; display: flex; overflow: hidden; }
 @media (max-width: 420px) {
-  .rating-grid { grid-template-columns: repeat(2, 1fr); }
+  .rating-grid { grid-template-columns: repeat(3, 1fr); }
   .stats-grid  { grid-template-columns: repeat(3, 1fr); }
   .panel, .card-face { padding: 18px 14px; }
   .stat-num { font-size: 1.5rem; }
+  .btn-rate { padding: 9px 4px; font-size: .72rem; }
 }
 </style>
 </head>
@@ -468,6 +470,9 @@ body::before {
         <div class="rating-grid">
           <button class="btn-rate btn-again" onclick="rate(1)">
             Again<span class="interval-badge" id="int-1"></span>
+          </button>
+          <button class="btn-rate btn-recap" onclick="rate(1.5)">
+            Recap<span class="interval-badge" id="int-1.5"></span>
           </button>
           <button class="btn-rate btn-hard" onclick="rate(2)">
             Hard<span class="interval-badge" id="int-2"></span>
@@ -603,20 +608,29 @@ function nextInterval(card, g) {
   const schStored  = Math.max(Number(card.scheduled_days) || 1, 1);
   const elapsed    = state >= 2 ? Math.min(rawElapsed, schStored * 2) : 0;
   const r          = state >= 2 ? forgettingCurve(elapsed, s) : 1;
+  // Recap (1.5) only has meaning in Review state (needs a previous interval to
+  // cap against); elsewhere it collapses to Hard, matching scheduleCard's logic.
+  const eg = (g === 1.5 && state !== 2) ? 2 : g;
   if (state === 0) {
-    const ns = initS(g);
-    if (g <= 2)      return LEARNING_STEPS[0];
-    else if (g === 3) return LEARNING_STEPS[1];
+    const ns = initS(eg);
+    if (eg <= 2)      return LEARNING_STEPS[0];
+    else if (eg === 3) return LEARNING_STEPS[1];
     else             return Math.max(1, Math.round(ns));
   }
   if (state === 1 || state === 3) {
-    const ns = sShort(s, g);
-    if (g === 1) return LEARNING_STEPS[0];
-    if (g === 2) return LEARNING_STEPS[1];
+    const ns = sShort(s, eg);
+    if (eg === 1) return LEARNING_STEPS[0];
+    if (eg === 2) return LEARNING_STEPS[1];
     return Math.max(1, Math.round(ns));
   }
   // state === 2 (Review)
   if (g === 1) return 0;
+  if (g === 1.5) {
+    // Recap: bookkeeping uses Hard's formula; shown/scheduled interval is
+    // capped at the previous interval (never grows on repeated partial recall).
+    const hardDays = Math.max(1, Math.round(Math.max(sRecall(d, s, r, 2), 0.1)));
+    return Math.min(hardDays, schStored);
+  }
   return Math.max(1, Math.round(Math.max(sRecall(d, s, r, g), 0.1)));
 }
 function formatInterval(days) {
@@ -639,26 +653,42 @@ function scheduleCard(card, rating) {
   // #6: neutral difficulty fallback (W[4] = mean difficulty), not rating-dependent
   const d       = clamp(Number(card.difficulty) || W[4], 1, 10);
   const r       = state >= 2 ? forgettingCurve(elapsed, s) : 1;
+  // Recap (1.5) is only meaningful in Review state, where a "previous interval"
+  // exists to cap against. In New/Learning/Relearning states there's no such
+  // reference yet, so Recap collapses to Hard (2) — same calibrated W[] indexing
+  // as every other rating, no special-casing needed in initD/initS/sShort/nextD.
+  const effRating = (rating === 1.5 && state !== 2) ? 2 : rating;
   let newS, newD, newState, schDays;
   if (state === 0) {                  // ── New ──
-    newD = initD(rating); newS = initS(rating);
+    newD = initD(effRating); newS = initS(effRating);
     // #1 + #2: Again/Hard → Learning step 0; Good → Learning step 1; Easy only graduates
-    if (rating <= 2)      { newState = 1; schDays = LEARNING_STEPS[0]; }
-    else if (rating === 3){ newState = 1; schDays = LEARNING_STEPS[1]; }
+    if (effRating <= 2)      { newState = 1; schDays = LEARNING_STEPS[0]; }
+    else if (effRating === 3){ newState = 1; schDays = LEARNING_STEPS[1]; }
     else                  { newState = 2; schDays = Math.max(1, Math.round(newS)); }
   } else if (state === 1) {           // ── Learning ──
-    newD = nextD(d, rating); newS = sShort(s, rating);
-    if (rating === 1)      { newState = 1; schDays = LEARNING_STEPS[0]; } // Again → 10 min
-    else if (rating === 2) { newState = 1; schDays = LEARNING_STEPS[1]; } // Hard  → 1 h
+    newD = nextD(d, effRating); newS = sShort(s, effRating);
+    if (effRating === 1)      { newState = 1; schDays = LEARNING_STEPS[0]; } // Again → 10 min
+    else if (effRating === 2) { newState = 1; schDays = LEARNING_STEPS[1]; } // Hard  → 1 h
     else                   { newState = 2; schDays = Math.max(1, Math.round(newS)); }
   } else if (state === 2) {           // ── Review ──
-    newD = nextD(d, rating);
-    if (rating === 1) { newS = sForget(d, s, r); newState = 3; schDays = 0; }
-    else { newS = Math.max(sRecall(d, s, r, rating), 0.1); newState = 2; schDays = Math.max(1, Math.round(newS)); }
+    if (rating === 1.5) {
+      // Recap: S/D bookkeeping identical to Hard (calibrated, no invented weights).
+      // Only the scheduled interval is overridden: capped at previous interval,
+      // so consecutive Recaps never grow past where the card already was.
+      newD = nextD(d, 2);
+      newS = Math.max(sRecall(d, s, r, 2), 0.1);
+      newState = 2;
+      const hardDays = Math.max(1, Math.round(newS));
+      schDays = Math.min(hardDays, schStored);
+    } else if (rating === 1) {
+      newD = nextD(d, rating); newS = sForget(d, s, r); newState = 3; schDays = 0;
+    } else {
+      newD = nextD(d, rating); newS = Math.max(sRecall(d, s, r, rating), 0.1); newState = 2; schDays = Math.max(1, Math.round(newS));
+    }
   } else {                            // ── Relearning ──
-    newD = nextD(d, rating); newS = sShort(s, rating);
-    if (rating === 1)      { newState = 3; schDays = LEARNING_STEPS[0]; } // Again → 10 min
-    else if (rating === 2) { newState = 3; schDays = LEARNING_STEPS[1]; } // Hard  → 1 h
+    newD = nextD(d, effRating); newS = sShort(s, effRating);
+    if (effRating === 1)      { newState = 3; schDays = LEARNING_STEPS[0]; } // Again → 10 min
+    else if (effRating === 2) { newState = 3; schDays = LEARNING_STEPS[1]; } // Hard  → 1 h
     else                   { newState = 2; schDays = Math.max(1, Math.round(newS)); }
   }
   const due = new Date(now.getTime() + schDays * 86400000);
@@ -676,12 +706,20 @@ function scheduleCard(card, rating) {
 }
 
 // shownCount=0 means no hints yet → Easy; each hint revealed lowers rating
+// Ladder (each band mutually exclusive and gapless, checked strictest-first).
+// No rounding on the ratio comparisons — shown/total compared directly as reals.
+//   0 hints              → Easy
+//   0 < h ≤ .2×total      → Good
+//   .2× < h < .4×         → Hard
+//   .4× ≤ h ≤ .5×         → Recap
+//   h > .5×               → Again
 function shownToRating(shown, total) {
   if (total <= 1) return null;
-  if (shown >= total)                   return 1; // Again
-  if (shown > Math.ceil(total * 0.55))  return 2; // Hard
-  if (shown > 0)                        return 3; // Good
-  return 4;                                       // Easy — no hints needed
+  if (shown === 0)            return 4;   // Easy
+  if (shown <= total * 0.2)   return 3;   // Good
+  if (shown <  total * 0.4)   return 2;   // Hard
+  if (shown <= total * 0.5)   return 1.5; // Recap
+  return 1;                               // Again
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -847,7 +885,7 @@ function escHtml(s) {
 
 // ── Interval preview badges ────────────────────────────────────────────────
 function renderIntervalPreviews(card) {
-  [1,2,3,4].forEach(g => {
+  [1,2,1.5,3,4].forEach(g => {
     document.getElementById('int-' + g).textContent = formatInterval(nextInterval(card, g));
   });
 }
@@ -910,8 +948,8 @@ function applySuggestion() {
   clearSuggestion();
   const suggested = shownToRating(shownCount, shuffledKw.length);
   if (!suggested) return;
-  const map    = {1:'.btn-again',2:'.btn-hard',3:'.btn-good',4:'.btn-easy'};
-  const labels = {1:'Again',2:'Hard',3:'Good',4:'Easy'};
+  const map    = {1:'.btn-again',2:'.btn-hard',1.5:'.btn-recap',3:'.btn-good',4:'.btn-easy'};
+  const labels = {1:'Again',2:'Hard',1.5:'Recap',3:'Good',4:'Easy'};
   document.querySelector(map[suggested])?.classList.add('suggested');
   document.getElementById('rating-hint').textContent =
     `Suggested: ${labels[suggested]} — ${shownCount} of ${shuffledKw.length} keywords shown`;

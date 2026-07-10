@@ -267,7 +267,7 @@ td code { font-size: .82rem; }
 /* ── Rating row ──────────────────────────────────────────────────────────── */
 
 .rating-demo {
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   gap: 10px; margin: 16px 0;
 }
 .rd-btn {
@@ -275,6 +275,7 @@ td code { font-size: .82rem; }
   text-align: center; font-weight: 700; font-size: .85rem; color: #fff;
 }
 .rd-again  { background: var(--pink); }
+.rd-recap  { background: var(--amber); }
 .rd-hard   { background: #FF7A00; }
 .rd-good   { background: var(--purple); }
 .rd-easy   { background: #00A870; }
@@ -319,7 +320,7 @@ td code { font-size: .82rem; }
   .arch { flex-direction: column; }
   .arch-arrow { transform: rotate(90deg); padding: 8px 0; }
   .kw-map { grid-template-columns: 1fr 1fr; }
-  .rating-demo { grid-template-columns: 1fr 1fr; }
+  .rating-demo { grid-template-columns: repeat(3, 1fr); }
 }
 </style>
 </head>
@@ -676,7 +677,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p>Click <strong>＋ Hint</strong> to reveal one keyword per click. The hint picker avoids revealing keywords you have already attempted in Spell Check (see below). Click <strong>↩ Flip</strong> at any point to see the answer on the back.</p>
 
-<p>The number of hints needed determines the suggested rating:</p>
+<p>The number of hints needed determines the suggested rating. Bands are compared against exact fractions of the card's total keyword count (no rounding):</p>
 
 <div class="kw-map">
   <div class="kw-cell" style="border-color:rgba(0,214,143,.3)">
@@ -685,26 +686,28 @@ Blooms ~2 weeks, late March to early April.</pre>
     <div class="kw-rating" style="color:var(--mint)">→ Easy (4)</div>
   </div>
   <div class="kw-cell" style="border-color:rgba(124,58,255,.3)">
-    <div class="kw-shown" style="color:var(--purple)">1+ hints</div>
-    <div class="kw-label">At least one hint needed</div>
+    <div class="kw-shown" style="color:var(--purple)">0 &lt; h ≤ 20%</div>
+    <div class="kw-label">A fifth or fewer of keywords needed</div>
     <div class="kw-rating" style="color:var(--purple)">→ Good (3)</div>
   </div>
   <div class="kw-cell" style="border-color:rgba(255,122,0,.3)">
-    <div class="kw-shown" style="color:#FF7A00">&gt;50%</div>
-    <div class="kw-label">More than half shown</div>
+    <div class="kw-shown" style="color:#FF7A00">20% &lt; h &lt; 40%</div>
+    <div class="kw-label">Under half, more than a fifth</div>
     <div class="kw-rating" style="color:#FF7A00">→ Hard (2)</div>
   </div>
+  <div class="kw-cell" style="border-color:rgba(255,184,0,.3)">
+    <div class="kw-shown" style="color:var(--amber)">40% ≤ h ≤ 50%</div>
+    <div class="kw-label">Roughly half of keywords needed</div>
+    <div class="kw-rating" style="color:var(--amber)">→ Recap (1.5)</div>
+  </div>
   <div class="kw-cell" style="border-color:rgba(255,45,135,.3)">
-    <div class="kw-shown" style="color:var(--pink)">n / n</div>
-    <div class="kw-label">All keywords shown</div>
+    <div class="kw-shown" style="color:var(--pink)">h &gt; 50%</div>
+    <div class="kw-label">More than half of keywords needed</div>
     <div class="kw-rating" style="color:var(--pink)">→ Again (1)</div>
   </div>
-  <div class="kw-cell" style="border-color:rgba(255,184,0,.3)">
-    <div class="kw-shown" style="color:var(--amber)">1 / 1</div>
-    <div class="kw-label">Single keyword card</div>
-    <div class="kw-rating" style="color:var(--amber)">→ Rate manually</div>
-  </div>
 </div>
+
+<p>Cards with 0 or 1 total keywords have no meaningful hint ratio, so no rating is auto-suggested — rate manually.</p>
 
 <p>The suggested button is highlighted with a white outline. You can always override by clicking any other rating button.</p>
 
@@ -737,11 +740,16 @@ Blooms ~2 weeks, late March to early April.</pre>
 <p>After flipping, rate how well you recalled the card. Each button shows the next review interval:</p>
 
 <div class="rating-demo">
-  <div class="rd-btn rd-again">Again<div class="rd-sub">10m</div></div>
+  <div class="rd-btn rd-again">Again<div class="rd-sub">0d*</div></div>
+  <div class="rd-btn rd-recap">Recap<div class="rd-sub">≤ prev</div></div>
   <div class="rd-btn rd-hard">Hard<div class="rd-sub">1h</div></div>
   <div class="rd-btn rd-good">Good<div class="rd-sub">3d</div></div>
   <div class="rd-btn rd-easy">Easy<div class="rd-sub">15d</div></div>
 </div>
+
+<p><em>*Again's interval depends on the card's current state: from Review it drops the card into Relearning and becomes due immediately (interval ≈ 0); from Learning or Relearning it steps to a fixed 10-minute recheck.</em></p>
+
+<p><strong>Recap</strong> sits between Again and Hard. It updates stability and difficulty using the same formula as Hard — no separate weight set — but the interval it schedules is capped at the card's previous interval, so it never grows on repeated presses. It's for "I recognized this, but not confidently, and Hard's growing interval still feels too aggressive." Recap only behaves this way from Review state; from New/Learning/Relearning (where there's no prior interval to cap against) it falls back to Hard's own scheduling.</p>
 
 <p>Intervals are computed by FSRS v5 before you rate, so you can see the consequence of each choice before clicking. Actual values depend on the card's history.</p>
 
@@ -787,25 +795,25 @@ Blooms ~2 weeks, late March to early April.</pre>
       <td><span class="badge b-blue">New</span></td>
       <td>0</td>
       <td>Never reviewed. Blank FSRS fields.</td>
-      <td>Easy→graduates to Review (1+ days); Good→Learning (1 d); Again/Hard→enters Learning (10 min / 1 h)</td>
+      <td>Easy→graduates to Review (1+ days); Good→Learning (1 d); Again/Recap/Hard→enters Learning (10 min / 1 h — Recap behaves as Hard here, since there's no prior interval yet)</td>
     </tr>
     <tr>
       <td><span class="badge b-amber">Learning</span></td>
       <td>1</td>
       <td>First few reviews. Building initial stability.</td>
-      <td>Again→10 min, Hard→1 h, Good/Easy→graduates to Review</td>
+      <td>Again→10 min, Recap/Hard→1 h, Good/Easy→graduates to Review</td>
     </tr>
     <tr>
       <td><span class="badge b-purple">Review</span></td>
       <td>2</td>
       <td>Graduated. Scheduled by FSRS interval.</td>
-      <td>Days–months based on stability</td>
+      <td>Days–months based on stability; Again→due immediately, drops to Relearning; Recap→capped at previous interval, stays in Review</td>
     </tr>
     <tr>
       <td><span class="badge b-pink">Relearning</span></td>
       <td>3</td>
       <td>Lapsed (rated Again while in Review). Relearning.</td>
-      <td>Again→10 min, Hard→1 h, Good/Easy→graduates to Review (≥1 day, or 12h+ if stability is very low)</td>
+      <td>Again→10 min, Recap/Hard→1 h, Good/Easy→graduates to Review (≥1 day, or 12h+ if stability is very low)</td>
     </tr>
   </tbody>
 </table>
