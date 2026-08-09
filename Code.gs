@@ -82,8 +82,7 @@ function getDueCards() {
   if (data.length < 2) return [];
 
   const headers = data[0].map(String);
-  const today   = new Date();
-  today.setHours(23, 59, 59, 999);
+  const now     = new Date();
 
   return data.slice(1)
     .filter(row => row[0]) // must have id
@@ -92,7 +91,7 @@ function getDueCards() {
       headers.forEach((h, i) => c[h] = row[i]);
       return c;
     })
-    .filter(c => !c.due || new Date(c.due) <= today)
+    .filter(c => !c.due || new Date(c.due) <= now)
     .sort((a, b) => {
       if (!a.due && !b.due) return 0;  // both new — preserve relative order
       if (!a.due) return 1;            // new cards at end
@@ -149,15 +148,14 @@ function getStats() {
   const idIdx    = headers.indexOf('id');
   const dueIdx   = headers.indexOf('due');
   const stateIdx = headers.indexOf('state');
-  const today    = new Date();
-  today.setHours(23, 59, 59, 999);
+  const now      = new Date();
 
   let total = 0, due = 0, newCards = 0, review = 0;
   data.slice(1).forEach(row => {
     if (!row[idIdx]) return;
     total++;
     const dueDate = row[dueIdx];
-    const isDue   = !dueDate || new Date(dueDate) <= today;
+    const isDue   = !dueDate || new Date(dueDate) <= now;
     if (isDue) {
       due++;
       const state = Number(row[stateIdx]) || 0;
