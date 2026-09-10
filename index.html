@@ -562,7 +562,7 @@ window.addEventListener('beforeunload', () => {
 const W = [
   0.40255, 1.18385, 3.17300, 15.69105,   // w[0..3]  S₀ per grade
   7.19490, 0.53450,  1.46040,  0.00460,   // w[4..7]  D₀, difficulty
-  1.54575, 0.11920,  1.01925,  1.93950,   // w[8..11] recall stability
+  0.80000, 0.11920,  1.01925,  1.93950,   // w[8..11] recall stability (w8 lowered from 1.54575: gentler Good/Hard/Easy growth)
   0.11000, 0.29605,  2.26980,  0.23150,   // w[12..15] forget stability + hard penalty
   2.98980, 0.51655,  0.66210              // w[16..18] easy bonus, short-term
 ];
@@ -571,6 +571,11 @@ const LEARNING_STEPS = [10 / 1440, 60 / 1440]; // Again→10 min, Hard→1 h
 const TARGET_RETENTION = 0.90;
 const DECAY  = -0.5;
 const FACTOR = Math.pow(TARGET_RETENTION, 1 / DECAY) - 1;
+
+// Repeat-miss decay applied to Recap's interval when the same hint-revealed
+// keyword(s) recur across consecutive reviews (exact-text match). Each
+// consecutive miss multiplies the Recap interval by this factor.
+const REPEAT_MISS_DECAY = 0.7;
 
 function forgettingCurve(t, s) {
   if (!s || s <= 0) return 0;
@@ -627,9 +632,15 @@ function nextInterval(card, g) {
   if (g === 1) return 0;
   if (g === 1.5) {
     // Recap: bookkeeping uses Hard's formula; shown/scheduled interval is
-    // capped at the previous interval (never grows on repeated partial recall).
-    const hardDays = Math.max(1, Math.round(Math.max(sRecall(d, s, r, 2), 0.1)));
-    return Math.min(hardDays, schStored);
+    // capped at the previous interval, then decayed by the card's last-
+    // persisted miss_streak so repeated identical-keyword misses shrink the
+    // preview instead of plateauing at schStored forever. This preview
+    // necessarily reflects the streak carried in from the previous review
+    // (this review's own hint reveals aren't known until rate() runs).
+    const hardDays   = Math.max(1, Math.round(Math.max(sRecall(d, s, r, 2), 0.1)));
+    const capped     = Math.min(hardDays, schStored);
+    const missStreak = Number(card.miss_streak) || 0;
+    return Math.max(1, Math.round(capped * Math.pow(REPEAT_MISS_DECAY, missStreak)));
   }
   return Math.max(1, Math.round(Math.max(sRecall(d, s, r, g), 0.1)));
 }
@@ -641,7 +652,13 @@ function formatInterval(days) {
   if (days < 365)      return Math.round(days / 30) + 'mo';
   return (days / 365).toFixed(1) + 'y';
 }
-function scheduleCard(card, rating) {
+// missStreak: count of consecutive reviews (including this one) where the
+// hint-revealed keyword set overlapped (exact text) with the previous
+// review's hint-revealed set. 0 = no repeat miss. Only affects the Recap
+// (1.5) interval — S/D bookkeeping for Recap is unchanged (still uses
+// Hard's formula), only the shown/scheduled interval decays further.
+function scheduleCard(card, rating, missStreak) {
+  missStreak = missStreak || 0;
   const now     = new Date();
   const state   = Number(card.state) || 0;
   const lr      = card.last_review ? new Date(card.last_review) : now;
@@ -673,13 +690,16 @@ function scheduleCard(card, rating) {
   } else if (state === 2) {           // ── Review ──
     if (rating === 1.5) {
       // Recap: S/D bookkeeping identical to Hard (calibrated, no invented weights).
-      // Only the scheduled interval is overridden: capped at previous interval,
-      // so consecutive Recaps never grow past where the card already was.
+      // The scheduled interval is capped at the previous interval so it never
+      // grows past where the card already was, THEN decayed by missStreak so
+      // repeated identical-keyword misses actually shrink the interval instead
+      // of plateauing at schStored forever.
       newD = nextD(d, 2);
       newS = Math.max(sRecall(d, s, r, 2), 0.1);
       newState = 2;
       const hardDays = Math.max(1, Math.round(newS));
-      schDays = Math.min(hardDays, schStored);
+      const capped   = Math.min(hardDays, schStored);
+      schDays = Math.max(1, Math.round(capped * Math.pow(REPEAT_MISS_DECAY, missStreak)));
     } else if (rating === 1) {
       newD = nextD(d, rating); newS = sForget(d, s, r); newState = 3; schDays = 0;
     } else {
@@ -957,7 +977,24 @@ function applySuggestion() {
 
 function rate(rating) {
   const card = deck[idx];
-  const fsrs = scheduleCard(card, rating);
+
+  // Keywords the user needed a hint for THIS review (exact text), counted
+  // at rating time — this is the "unrecalled" signal per the current
+  // definition (hint-revealed set at the moment the rating is clicked).
+  const missedThisReview = shuffledKw.slice(0, shownCount);
+  const prevWeak = String(card.weak_keywords || '')
+    .split(';').map(k => k.trim()).filter(Boolean);
+
+  // Exact-text overlap between this review's misses and last review's misses.
+  const overlap = missedThisReview.filter(k => prevWeak.includes(k));
+  const missStreak = overlap.length > 0
+    ? (Number(card.miss_streak) || 0) + 1
+    : 0;
+
+  const fsrs = scheduleCard(card, rating, missStreak);
+  fsrs.weak_keywords = missedThisReview.join(';');
+  fsrs.miss_streak    = missStreak;
+
   Object.assign(card, fsrs);
   delete card._skipped;
   google.script.run

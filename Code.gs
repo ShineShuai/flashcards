@@ -4,7 +4,8 @@ const SHEET_NAME = 'cards';
 const HEADERS = [
   'id', 'keywords', 'back_content', 'back_type',
   'due', 'stability', 'difficulty', 'elapsed_days',
-  'scheduled_days', 'reps', 'lapses', 'state', 'last_review'
+  'scheduled_days', 'reps', 'lapses', 'state', 'last_review',
+  'weak_keywords', 'miss_streak'
 ];
 
 // ─── Entry Point ───────────────────────────────────────────────────────────
@@ -111,7 +112,8 @@ function updateCard(id, fsrs) {
   const data    = sheet.getDataRange().getValues();
   const headers = data[0].map(String);
   const fields  = ['stability', 'difficulty', 'elapsed_days', 'scheduled_days',
-                   'reps', 'lapses', 'state', 'last_review', 'due'];
+                   'reps', 'lapses', 'state', 'last_review', 'due',
+                   'weak_keywords', 'miss_streak'];
 
   // Verify all FSRS columns exist; auto-add any that are missing
   fields.forEach(f => {
