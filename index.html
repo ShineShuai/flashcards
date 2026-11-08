@@ -260,7 +260,7 @@ body::before {
   background: var(--bg2) !important;
   border: 1.5px dashed var(--purple);
   color: var(--text); -webkit-text-fill-color: var(--text);
-  font-weight: 700; font-size: .95rem; font-family: inherit;
+  font-weight: 700; font-size: 1rem; font-family: inherit;
   outline: none; min-width: 80px; width: auto;
   padding: 7px 16px; border-radius: 100px; animation: none;
   transition: border-color .15s, background .15s;
@@ -431,7 +431,7 @@ body::before {
     <div class="card-3d" id="card3d">
 
       <!-- Front -->
-      <div class="card-face card-face-front">
+      <div class="card-face card-face-front" id="face-front">
         <div class="card-meta">
           <span>Keywords</span>
           <span>
@@ -460,7 +460,7 @@ body::before {
       </div>
 
       <!-- Back -->
-      <div class="card-face card-face-back">
+      <div class="card-face card-face-back" id="face-back" inert>
         <div class="card-meta">
           <span>Answer</span>
           <button class="btn btn-flip" onclick="unflipCard()">↪ Flip</button>
@@ -774,19 +774,39 @@ let sessionTotal = 0;   // cards at session start
 // A sub-day card (Again / lapse, 10 min step) returns after this many other
 // cards; longer steps (Hard, 1 h) return at the end of the session.
 const REQUEUE_GAP = 5;
+// The back face is re-rendered only after the flip-back animation has hidden it,
+// otherwise the next card's answer shows while the card rotates.
+const FLIP_MS = 550;    // keep in sync with the .card-3d transition
+let pendingBack = null;
+let backTimer   = null;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Theme
 // ═══════════════════════════════════════════════════════════════════════════
+// localStorage can throw (blocked storage, e.g. Safari ITP in an iframe)
+function storageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
+}
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    // not persisted; the in-memory state still works
+  }
+}
 function toggleTheme() {
   const html = document.documentElement;
   const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   html.setAttribute('data-theme', next);
   document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
-  localStorage.setItem('fc-theme', next);
+  storageSet('fc-theme', next);
 }
 function initTheme() {
-  const saved = localStorage.getItem('fc-theme') || 'light';
+  const saved = storageGet('fc-theme') || 'light';
   document.documentElement.setAttribute('data-theme', saved);
   document.getElementById('themeBtn').textContent = saved === 'dark' ? '☀️' : '🌙';
 }
@@ -837,7 +857,10 @@ function startSession() {
       updateProgress();
       loadCard(0);
     })
-    .withFailureHandler(err => alert('Error loading cards: ' + err.message))
+    .withFailureHandler(err => {
+      alert('Error loading cards: ' + err.message);
+      show('s-home');
+    })
     .getDueCards();
 }
 
@@ -853,7 +876,8 @@ function loadCard(i) {
   shuffledKw = shuffle(kws);
   shownCount = 0;   // no hints revealed at start
 
-  document.getElementById('card3d').classList.remove('flipped');
+  const wasFlipped = isFlipped();
+  setFlipped(false);
   resetSpell();
 
   const stateMap = {0:'New',1:'Learning',2:'Review',3:'Relearning'};
@@ -865,9 +889,40 @@ function loadCard(i) {
 
   renderFront();
   updateSkipBadge();
-  renderBack(card);
+  if (wasFlipped) {
+    scheduleBack(card);   // the old answer stays on the rotating face until hidden
+  } else {
+    cancelBack();
+    renderBack(card);
+  }
   renderIntervalPreviews(card);
   clearSuggestion();
+}
+
+function isFlipped() {
+  return document.getElementById('card3d').classList.contains('flipped');
+}
+// Hidden face is inert: no clicks, no tab stops, no screen-reader access.
+function setFlipped(flag) {
+  document.getElementById('card3d').classList.toggle('flipped', flag);
+  document.getElementById('face-front').toggleAttribute('inert', flag);
+  document.getElementById('face-back').toggleAttribute('inert', !flag);
+}
+function cancelBack() {
+  clearTimeout(backTimer);
+  pendingBack = null;
+}
+function flushBack() {
+  clearTimeout(backTimer);
+  if (pendingBack) {
+    renderBack(pendingBack);
+    pendingBack = null;
+  }
+}
+function scheduleBack(card) {
+  cancelBack();
+  pendingBack = card;
+  backTimer = setTimeout(flushBack, FLIP_MS);
 }
 
 // Fisher–Yates (sort(() => random - .5) is biased)
@@ -885,8 +940,12 @@ function renderFront() {
   const total = shuffledKw.length;
   const area  = document.getElementById('kw-area');
 
-  // Preserve typed values from existing spell slots before rebuild
-  const savedInputs = [...area.querySelectorAll('.spell-slot')].map(el => el.value || '');
+  // Keep typed values across the rebuild. A hint removes one slot, so pack the
+  // non-empty values into the first slots instead of shifting them by position.
+  const saved = [...area.querySelectorAll('.spell-slot')]
+    .map(el => el.value)
+    .filter(v => v.trim() !== '');
+  let nextSaved = 0;
 
   area.innerHTML = '';
 
@@ -904,7 +963,8 @@ function renderFront() {
       inp.type = 'text';
       inp.className = 'kw-pill spell-slot';
       inp.placeholder = '●●';
-      inp.value = savedInputs[i - shownCount] || '';
+      inp.value = saved[nextSaved++] || '';
+      Object.entries(SPELL_INPUT_ATTRS).forEach(([k, v]) => inp.setAttribute(k, v));
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') checkSpelling(); });
       area.appendChild(inp);
     } else {
@@ -963,12 +1023,12 @@ function revealHint() {
 
   // Collect non-empty typed values from spell slots
   const typedInputs = [...document.querySelectorAll('.spell-slot')]
-    .map(el => el.value.trim().toLowerCase()).filter(Boolean);
+    .map(el => el.value.trim()).filter(Boolean);
 
   // Among still-hidden keywords, prefer one NOT close to any typed input
   const hidden = shuffledKw.slice(shownCount);
   const pick = hidden.find(kw =>
-    !typedInputs.some(inp => levenClose(inp, kw.toLowerCase(), 2))
+    !typedInputs.some(inp => spellScore(inp, kw) < Infinity)
   ) || hidden[0];
 
   // Swap chosen keyword into the next reveal position
@@ -979,12 +1039,18 @@ function revealHint() {
   }
   shownCount++;
   renderFront();
+  if (spellOpen) {
+    focusSpell();
+  }
 }
 
 function flipCard() {
-  const card = document.getElementById('card3d');
-  card.classList.toggle('flipped');
-  if (card.classList.contains('flipped')) {
+  const flip = !isFlipped();
+  if (flip) {
+    flushBack();   // flipping before the deferred render fired: show the right answer
+  }
+  setFlipped(flip);
+  if (flip) {
     applySuggestion();
     renderIntervalPreviews(deck[idx]);
   } else {
@@ -992,14 +1058,16 @@ function flipCard() {
   }
 }
 function unflipCard() {
-  document.getElementById('card3d').classList.remove('flipped');
+  setFlipped(false);
 }
 
 function skipCard() {
+  if (deck.length - idx <= 1) {
+    return;   // nothing else pending to skip to
+  }
   deck[idx]._skipped = true;
   const [card] = deck.splice(idx, 1);
   deck.push(card);
-  if (idx >= deck.length) idx = 0;
   updateProgress();
   updateSkipBadge();
   loadCard(idx);
@@ -1009,7 +1077,7 @@ function updateSkipBadge() {
   const badge = document.getElementById('skip-count');
   badge.style.display = total > 0 ? 'inline-flex' : 'none';
   badge.textContent = total;
-  document.getElementById('btn-skip').disabled = deck.length <= 1;
+  document.getElementById('btn-skip').disabled = deck.length - idx <= 1;
 }
 function clearSuggestion() {
   document.querySelectorAll('.btn-rate').forEach(b => b.classList.remove('suggested'));
@@ -1042,6 +1110,9 @@ function requeue(card) {
 }
 
 function rate(rating) {
+  if (!isFlipped()) {
+    return;   // ignore taps during the flip-back (double tap would rate the next card)
+  }
   const card = deck[idx];
 
   // Keywords the user needed a hint for THIS review, at the moment of rating
@@ -1080,18 +1151,68 @@ function rate(rating) {
 }
 
 // ── Spell check ────────────────────────────────────────────────────────────
-function levenClose(a, b, threshold) {
-  if (Math.abs(a.length - b.length) > threshold) return false;
-  const dp = Array.from({length: b.length + 1}, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    let prev = i;
-    for (let j = 1; j <= b.length; j++) {
-      const val = a[i-1] === b[j-1] ? dp[j-1] : 1 + Math.min(dp[j-1], dp[j], prev);
-      dp[j-1] = prev; prev = val;
-    }
-    dp[b.length] = prev;
+// @spell-begin
+// Comparison key: NFC, case-folded, single spaces.
+function spellKey(s) {
+  return s.normalize('NFC').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+// Allowed edits scale with the keyword length. CJK keywords must match exactly:
+// a wrong ideograph is a different word, not a typo.
+function spellThreshold(word) {
+  if (/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(word)) {
+    return 0;
   }
-  return dp[b.length] <= threshold;
+  const n = Array.from(word).length;
+  if (n <= 3) {
+    return 0;
+  }
+  return n <= 7 ? 1 : 2;
+}
+// Levenshtein on code points (not UTF-16 units): distance(a, b) <= threshold
+function levenClose(a, b, threshold) {
+  const x = Array.from(a);
+  const y = Array.from(b);
+  if (Math.abs(x.length - y.length) > threshold) {
+    return false;
+  }
+  const dp = Array.from({ length: y.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= x.length; i++) {
+    let prev = i;
+    for (let j = 1; j <= y.length; j++) {
+      const same = x[i - 1] === y[j - 1];
+      const cost = same ? dp[j - 1] : 1 + Math.min(dp[j - 1], dp[j], prev);
+      dp[j - 1] = prev;
+      prev = cost;
+    }
+    dp[y.length] = prev;
+  }
+  return dp[y.length] <= threshold;
+}
+// 0 = exact, 1 = close enough, Infinity = no match
+function spellScore(typed, target) {
+  const a = spellKey(typed);
+  const b = spellKey(target);
+  if (a === b) {
+    return 0;
+  }
+  return levenClose(a, b, spellThreshold(b)) ? 1 : Infinity;
+}
+// @spell-end
+// Stop the keyboard from "fixing" the very spelling being tested.
+const SPELL_INPUT_ATTRS = {
+  autocapitalize: 'off',
+  autocomplete: 'off',
+  autocorrect: 'off',
+  spellcheck: 'false',
+  enterkeyhint: 'done'
+};
+
+function focusSpell() {
+  const slots = [...document.querySelectorAll('.spell-slot')];
+  const target = slots.find(el => el.value === '') || slots[0];
+  if (target) {
+    target.focus();
+  }
 }
 
 function toggleSpell() {
@@ -1102,6 +1223,9 @@ function toggleSpell() {
     document.getElementById('spell-result').style.display = 'none';
   }
   renderFront();
+  if (spellOpen) {
+    focusSpell();
+  }
 }
 
 function resetSpell() {
@@ -1130,14 +1254,7 @@ function checkSpelling() {
   const used    = new Array(targets.length).fill(false);
   const matched = new Array(slots.length).fill(null);
 
-  function score(inp, kw) {
-    const a = inp.toLowerCase(), b = kw.toLowerCase();
-    if (a === b) return 0;
-    if (levenClose(a, b, 2)) return 1;
-    return Infinity;
-  }
-
-  const scores = typed.map(t => targets.map(kw => score(t, kw)));
+  const scores = typed.map(t => targets.map(kw => spellScore(t, kw)));
   // Process best-scoring inputs first (exact matches take priority)
   const order = typed.map((_, i) => i).sort((a, b) =>
     Math.min(...scores[a]) - Math.min(...scores[b])

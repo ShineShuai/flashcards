@@ -720,7 +720,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p>Click <strong>✎ Spell</strong> on the front card to enter spell-check mode. The ghost placeholder pills turn into text input fields — one per hidden keyword.</p>
 
-<p>Type your guesses in any order, then click <strong>✔ Check</strong> (or press Enter in any field). The app finds the best keyword match for each input using fuzzy matching (Levenshtein distance ≤ 2), so minor typos are forgiven. Inputs turn <span style="color:var(--mint);font-weight:700">green</span> for a match, <span style="color:var(--pink);font-weight:700">red</span> for no match.</p>
+<p>Type your guesses in any order, then click <strong>✔ Check</strong> (or press Enter in any field). The app finds the best keyword match for each input using fuzzy matching, so minor typos are forgiven. The allowed edit distance scales with the keyword length: 0 for up to 3 characters, 1 for 4–7, 2 for 8 or more. CJK keywords (kanji, kana, hanzi, hangul) must match exactly, since a wrong character is a different word, not a typo. Case, surrounding and repeated spaces, and Unicode composition (e.g. ü typed as u + ¨) are ignored. Inputs turn <span style="color:var(--mint);font-weight:700">green</span> for a match, <span style="color:var(--pink);font-weight:700">red</span> for no match.</p>
 
 <div class="callout callout-info">
   <div class="callout-label">Order doesn't matter</div>
@@ -733,7 +733,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <div class="callout callout-warn">
   <div class="callout-label">Hint interaction</div>
-  When you click <strong>＋ Hint</strong> while spell mode is active, the app picks a keyword that is <em>unlike</em> anything you have already typed (edit-distance &gt; 2). This prevents hints from revealing words you have already attempted, keeping the challenge fair.
+  When you click <strong>＋ Hint</strong> while spell mode is active, the app picks a keyword that is <em>unlike</em> anything you have already typed (no fuzzy match under the rule above). This prevents hints from revealing words you have already attempted, keeping the challenge fair.
 </div>
 
 <p>Already-revealed hint pills (shown in color) are not spell-check targets — only the remaining hidden slots are checked.</p>
