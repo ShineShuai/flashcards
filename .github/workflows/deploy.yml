@@ -1,0 +1,84 @@
+name: deploy
+
+# Manual deploy to Google Apps Script with clasp, after the tests pass.
+#
+# One-time setup (nothing here has run against a real script project):
+#  1. Enable the Apps Script API: https://script.google.com/home/usersettings
+#  2. Locally: npm i -g @google/clasp@3.4.1 && clasp login
+#     then in an empty folder: clasp clone <scriptId>   (Project Settings > Script ID)
+#     and commit the downloaded appsscript.json next to Code.gs (it holds the web app
+#     settings; clasp push overwrites the remote manifest with this file).
+#  3. Repository secrets (Settings > Secrets and variables > Actions):
+#       CLASPRC_JSON         contents of ~/.clasprc.json (grants access to your scripts)
+#       CLASP_SCRIPT_ID      the script ID
+#       CLASP_DEPLOYMENT_ID  the web app deployment ID (clasp deployments); its /exec URL
+#                            stays the same, each run moves it to a new version
+#  4. Optional: Settings > Environments > production > required reviewers.
+#  After this, edit only in the repository: push --force overwrites the editor's code.
+
+on:
+  workflow_dispatch:
+    inputs:
+      description:
+        description: Version description (default is the short commit hash)
+        required: false
+  # push:
+  #   tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
+  deploy:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    concurrency: deploy-production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm install -g @google/clasp@3.4.1
+      - name: Check the manifest is committed
+        run: |
+          if [ ! -f appsscript.json ]; then
+            echo "::error::appsscript.json is missing."
+            echo "Run 'clasp clone <scriptId>' once and commit the manifest."
+            exit 1
+          fi
+      - name: clasp credentials
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.CLASP_SCRIPT_ID }}
+        run: |
+          umask 077
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          printf '{"scriptId":"%s","rootDir":"."}\n' "$SCRIPT_ID" > .clasp.json
+      - name: Files that will be pushed
+        run: clasp status
+      - name: Push, create a version, move the deployment to it
+        env:
+          DEPLOYMENT_ID: ${{ secrets.CLASP_DEPLOYMENT_ID }}
+          DESCRIPTION: ${{ inputs.description }}
+        run: |
+          sha=$(git rev-parse --short HEAD)
+          desc="${DESCRIPTION:-$sha}"
+          clasp push --force
+          out=$(clasp --json version "$desc")
+          version=$(printf '%s\n' "$out" | sed -n 's/.*"versionNumber": *\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$version" ]; then
+            echo "::error::could not read the new version number"
+            exit 1
+          fi
+          clasp redeploy "$DEPLOYMENT_ID" -V "$version" -d "$desc"
+          echo "Deployed $sha as version $version" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove credentials
+        if: always()
+        run: rm -f "$HOME/.clasprc.json" .clasp.json

@@ -1,0 +1,89 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # FSRS maths vs py-fsrs vectors, spell matching, Code.gs against a service
+  # model, CSS contrast. No dependencies. Time zones matter (04:00 study-day
+  # rollover, DST), so run the lot in three.
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        tz: [Europe/Berlin, America/Los_Angeles, Asia/Tokyo]
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node test/fsrs-golden.mjs
+      - run: node test/spell.mjs
+      - run: node test/code.mjs
+      - run: node test/contrast.mjs
+
+  # index.html in jsdom with a stubbed google.script.run
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock jsdom@31.0.0
+      - run: |
+          for f in test/ui/*.test.mjs; do
+            echo "== $f"
+            node "$f"
+          done
+
+  # Real Chromium: five rating buttons in one row, tap targets, no scrolling
+  layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm install --no-save --no-package-lock playwright@1.63.0
+      - run: npx playwright install --with-deps chromium
+      - run: node test/layout.mjs
+
+  # The pinned marked <script> integrity hash vs the npm package (needs network)
+  integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node test/sri.mjs
+
+  # test/fsrs-golden.json must be what the pinned py-fsrs generates
+  golden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install fsrs==5.1.0
+      - run: python test/check_golden.py

@@ -1,0 +1,6 @@
+# clasp pushes only what is listed here (the Apps Script project files)
+**/**
+!Code.gs
+!index.html
+!docs.html
+!appsscript.json
