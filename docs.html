@@ -670,6 +670,10 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p>Each session goes through all cards due today in order (most overdue first, new cards last). A progress bar tracks completion. When all cards are rated, a summary screen shows totals.</p>
 
+<p><strong>Re-queue within the session.</strong> A card rated into a sub-day step comes back in the same session: the 10-minute step (Again, or a lapse) returns after 5 other cards; the 1-hour step (Hard) returns at the end of the session. A re-queued card counts as done in the progress bar only once it leaves the learning steps.</p>
+
+<p><strong>Study day.</strong> A new day starts at 04:00 local time. Intervals of one day or more are due at 04:00 of the target day, so a card reviewed at 23:00 with a 1-day interval is due at 04:00 the next morning. Sub-day steps stay exact timestamps.</p>
+
 <!-- ── Keywords ────────────────────────────────────────────────────────── -->
 <h2 id="keywords">Keyword Reveal Mechanic</h2>
 
@@ -749,7 +753,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p><em>*Again's interval depends on the card's current state: from Review it drops the card into Relearning and becomes due immediately (interval ≈ 0); from Learning or Relearning it steps to a fixed 10-minute recheck.</em></p>
 
-<p><strong>Recap</strong> sits between Again and Hard. It updates stability and difficulty using the same formula as Hard — no separate weight set — but the interval it schedules is capped at the card's previous interval, so it never grows on repeated presses. It's for "I recognized this, but not confidently, and Hard's growing interval still feels too aggressive." Recap only behaves this way from Review state; from New/Learning/Relearning (where there's no prior interval to cap against) it falls back to Hard's own scheduling.</p>
+<p><strong>Recap</strong> sits between Again and Hard. Difficulty is updated as for Hard, but <em>stability never grows</em> and the interval never exceeds the card's previous interval. If the same keywords needed a hint in consecutive reviews (case-insensitive match), stability, and so the interval, is multiplied by 0.7 for each consecutive repeat. It is for "I recognized this, but not confidently, and Hard's growing interval still feels too aggressive." Recap only behaves this way from Review state; from New/Learning/Relearning (no prior interval to cap against) it falls back to Hard's own scheduling. The Recap preview is recomputed when you flip, so it reflects the hints you used.</p>
 
 <p>Intervals are computed by FSRS v5 before you rate, so you can see the consequence of each choice before clicking. Actual values depend on the card's history.</p>
 
@@ -776,10 +780,13 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p>At t = S days, R = 0.90 — that's the 90% retention target baked into the constants.</p>
 
-<p>The W parameters (19 values) are the default from the open-spaced-repetition project. To personalize them, run <a href="https://github.com/open-spaced-repetition/fsrs-optimizer" target="_blank">fsrs-optimizer</a> on your review log and replace the <code>W</code> array at the top of the <code>&lt;script&gt;</code> block in <code>index.html</code>.</p>
+<p>The W parameters (19 values) are the unmodified defaults of py-fsrs 5.1.0; difficulty update (linear damping, reversion to D0(Easy)) and post-lapse stability cap follow the same reference. To personalize them, run <a href="https://github.com/open-spaced-repetition/fsrs-optimizer" target="_blank">fsrs-optimizer</a> on your review log and replace the <code>W</code> array at the top of the <code>&lt;script&gt;</code> block in <code>index.html</code>.</p>
+
+<h3>Desired retention and maximum interval</h3>
+<p>The interval is the number of days until predicted recall falls to <code>DESIRED_RETENTION</code> (0.94). Raise it for shorter intervals and more reviews; lower it for the opposite. <code>MAX_INTERVAL</code> (365 days) caps the scheduled interval only; stability keeps growing. Both are constants at the top of the FSRS block in <code>index.html</code>. The curve constant (R = 90% at t = S) is independent of <code>DESIRED_RETENTION</code>.</p>
 
 <h3>Overdue cap</h3>
-<p>If a card is reviewed much later than scheduled, the elapsed days used for retrievability is capped at <strong>2× the scheduled interval</strong>. This prevents extreme overdue cards from producing unrealistically inflated stability after a correct answer.</p>
+<p>Elapsed time is counted in study days (day boundary 04:00 local). If a card is reviewed much later than scheduled, the elapsed days used for retrievability is capped at <strong>2× the scheduled interval</strong>. This prevents extreme overdue cards from producing unrealistically inflated stability after a correct answer.</p>
 
 <h3>Difficulty fallback</h3>
 <p>If a card has no stored difficulty (e.g. corrupted or manually added row), the scheduler defaults to <code>W[4]</code> (the mean difficulty, ~7.19) rather than deriving it from the current rating. This avoids biasing the card's future scheduling based on a single accidental rating.</p>
@@ -795,7 +802,7 @@ Blooms ~2 weeks, late March to early April.</pre>
       <td><span class="badge b-blue">New</span></td>
       <td>0</td>
       <td>Never reviewed. Blank FSRS fields.</td>
-      <td>Easy→graduates to Review (1+ days); Good→Learning (1 d); Again/Recap/Hard→enters Learning (10 min / 1 h — Recap behaves as Hard here, since there's no prior interval yet)</td>
+      <td>Easy→graduates to Review (≥1 day); Good→Learning (1 h); Again/Recap/Hard→enters Learning (10 min / 1 h — Recap behaves as Hard here, since there's no prior interval yet)</td>
     </tr>
     <tr>
       <td><span class="badge b-amber">Learning</span></td>
@@ -813,7 +820,7 @@ Blooms ~2 weeks, late March to early April.</pre>
       <td><span class="badge b-pink">Relearning</span></td>
       <td>3</td>
       <td>Lapsed (rated Again while in Review). Relearning.</td>
-      <td>Again→10 min, Recap/Hard→1 h, Good/Easy→graduates to Review (≥1 day, or 12h+ if stability is very low)</td>
+      <td>Again→10 min, Recap/Hard→1 h, Good/Easy→graduates to Review (≥1 day)</td>
     </tr>
   </tbody>
 </table>

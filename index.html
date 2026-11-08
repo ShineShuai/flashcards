@@ -558,19 +558,24 @@ window.addEventListener('beforeunload', () => {
 // FSRS v5
 // Ref: https://github.com/open-spaced-repetition/py-fsrs
 // ═══════════════════════════════════════════════════════════════════════════
+// @fsrs-begin
 // Default parameters (19 values, open-spaced-repetition/py-fsrs v5)
 const W = [
   0.40255, 1.18385, 3.17300, 15.69105,   // w[0..3]  S₀ per grade
   7.19490, 0.53450,  1.46040,  0.00460,   // w[4..7]  D₀, difficulty
-  0.80000, 0.11920,  1.01925,  1.93950,   // w[8..11] recall stability (w8 lowered from 1.54575: gentler Good/Hard/Easy growth)
+  1.54575, 0.11920,  1.01925,  1.93950,   // w[8..11] recall stability
   0.11000, 0.29605,  2.26980,  0.23150,   // w[12..15] forget stability + hard penalty
   2.98980, 0.51655,  0.66210              // w[16..18] easy bonus, short-term
 ];
 // Intra-day steps for Learning/Relearning states (in fractional days)
 const LEARNING_STEPS = [10 / 1440, 60 / 1440]; // Again→10 min, Hard→1 h
-const TARGET_RETENTION = 0.90;
+// Interval = days until predicted recall falls to this level. Higher means
+// shorter intervals and more reviews. Independent of the curve constants.
+const DESIRED_RETENTION = 0.94;
+const MAX_INTERVAL = 365;   // days; caps scheduled_days only, not stability
+const ROLLOVER_HOUR = 4;    // a new study day starts at 04:00 local time
 const DECAY  = -0.5;
-const FACTOR = Math.pow(TARGET_RETENTION, 1 / DECAY) - 1;
+const FACTOR = Math.pow(0.9, 1 / DECAY) - 1;   // curve constant: R(t = S) = 0.9
 
 // Repeat-miss decay applied to Recap's interval when the same hint-revealed
 // keyword(s) recur across consecutive reviews (exact-text match). Each
@@ -585,8 +590,10 @@ function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 function initS(g) { return Math.max(W[g - 1], 0.1); }
 function initD(g) { return clamp(W[4] - Math.exp(W[5] * (g - 1)) + 1, 1, 10); }
 function nextD(d, g) {
-  const dPrime = d + (-W[6] * (g - 3));
-  return clamp(W[7] * W[4] + (1 - W[7]) * dPrime, 1, 10);
+  // FSRS-5: linear damping, mean reversion towards D0(Easy)
+  const delta   = -W[6] * (g - 3);
+  const damped  = d + (10 - d) * delta / 9;
+  return clamp(W[7] * initD(4) + (1 - W[7]) * damped, 1, 10);
 }
 function sRecall(d, s, r, g) {
   const hardPenalty = g === 2 ? W[15] : 1;
@@ -595,54 +602,38 @@ function sRecall(d, s, r, g) {
     * (Math.exp(W[10] * (1 - r)) - 1) * hardPenalty * easyBonus + 1);
 }
 function sForget(d, s, r) {
-  return Math.max(
-    W[11] * Math.pow(d, -W[12]) * (Math.pow(s + 1, W[13]) - 1)
-    * Math.exp(W[14] * (1 - r)), 0.1);
+  const longTerm = W[11] * Math.pow(d, -W[12]) * (Math.pow(s + 1, W[13]) - 1)
+    * Math.exp(W[14] * (1 - r));
+  const cap = s / Math.exp(W[17] * W[18]);   // post-lapse S never exceeds this
+  return Math.max(Math.min(longTerm, cap), 0.1);
 }
 function sShort(s, g) { return Math.max(s * Math.exp(W[17] * (g - 3 + W[18])), 0.1); }
-function daysBetween(a, b) { return Math.round((b - a) / 86400000); }
-// #4: lightweight interval-only preview — avoids running full scheduleCard 4× per render
-function nextInterval(card, g) {
-  const state = Number(card.state) || 0;
-  const s     = Math.max(Number(card.stability) || 0.1, 0.1);
-  // #6: neutral difficulty fallback (W[4] = mean difficulty), not rating-dependent
-  const d     = clamp(Number(card.difficulty) || W[4], 1, 10);
-  const lr    = card.last_review ? new Date(card.last_review) : new Date();
-  // #7: cap elapsed at 2× scheduled_days to avoid extreme overdue distortion
-  const rawElapsed = state >= 2 ? Math.max(0, daysBetween(lr, new Date())) : 0;
-  const schStored  = Math.max(Number(card.scheduled_days) || 1, 1);
-  const elapsed    = state >= 2 ? Math.min(rawElapsed, schStored * 2) : 0;
-  const r          = state >= 2 ? forgettingCurve(elapsed, s) : 1;
-  // Recap (1.5) only has meaning in Review state (needs a previous interval to
-  // cap against); elsewhere it collapses to Hard, matching scheduleCard's logic.
-  const eg = (g === 1.5 && state !== 2) ? 2 : g;
-  if (state === 0) {
-    const ns = initS(eg);
-    if (eg <= 2)      return LEARNING_STEPS[0];
-    else if (eg === 3) return LEARNING_STEPS[1];
-    else             return Math.max(1, Math.round(ns));
+// Study-day index in local time; the day starts at ROLLOVER_HOUR.
+function studyDay(date) {
+  const shifted = new Date(date.getTime() - ROLLOVER_HOUR * 3600000);
+  return Date.UTC(shifted.getFullYear(), shifted.getMonth(), shifted.getDate()) / 86400000;
+}
+function daysBetween(a, b) {
+  return studyDay(b) - studyDay(a);
+}
+// Intervals >= 1 day snap to ROLLOVER_HOUR of the target study day (Anki-style);
+// sub-day steps stay exact timestamps.
+function dueDate(now, days) {
+  if (days < 1) {
+    return new Date(now.getTime() + days * 86400000);
   }
-  if (state === 1 || state === 3) {
-    const ns = sShort(s, eg);
-    if (eg === 1) return LEARNING_STEPS[0];
-    if (eg === 2) return LEARNING_STEPS[1];
-    return Math.max(1, Math.round(ns));
-  }
-  // state === 2 (Review)
-  if (g === 1) return 0;
-  if (g === 1.5) {
-    // Recap: bookkeeping uses Hard's formula; shown/scheduled interval is
-    // capped at the previous interval, then decayed by the card's last-
-    // persisted miss_streak so repeated identical-keyword misses shrink the
-    // preview instead of plateauing at schStored forever. This preview
-    // necessarily reflects the streak carried in from the previous review
-    // (this review's own hint reveals aren't known until rate() runs).
-    const hardDays   = Math.max(1, Math.round(Math.max(sRecall(d, s, r, 2), 0.1)));
-    const capped     = Math.min(hardDays, schStored);
-    const missStreak = Number(card.miss_streak) || 0;
-    return Math.max(1, Math.round(capped * Math.pow(REPEAT_MISS_DECAY, missStreak)));
-  }
-  return Math.max(1, Math.round(Math.max(sRecall(d, s, r, g), 0.1)));
+  const shifted = new Date(now.getTime() - ROLLOVER_HOUR * 3600000);
+  return new Date(shifted.getFullYear(), shifted.getMonth(),
+                  shifted.getDate() + days, ROLLOVER_HOUR, 0, 0, 0);
+}
+// Stability -> whole-day interval for DESIRED_RETENTION, capped at MAX_INTERVAL.
+function intervalDays(s) {
+  const raw = (s / FACTOR) * (Math.pow(DESIRED_RETENTION, 1 / DECAY) - 1);
+  return clamp(Math.round(raw), 1, MAX_INTERVAL);
+}
+// Interval preview for the rating buttons; same code path as the real schedule.
+function nextInterval(card, g, missStreak) {
+  return scheduleCard(card, g, missStreak).scheduled_days;
 }
 function formatInterval(days) {
   if (days < 1 / 1440) return '<1m';
@@ -653,65 +644,91 @@ function formatInterval(days) {
   return (days / 365).toFixed(1) + 'y';
 }
 // missStreak: count of consecutive reviews (including this one) where the
-// hint-revealed keyword set overlapped (exact text) with the previous
-// review's hint-revealed set. 0 = no repeat miss. Only affects the Recap
-// (1.5) interval — S/D bookkeeping for Recap is unchanged (still uses
-// Hard's formula), only the shown/scheduled interval decays further.
+// hint-revealed keyword set overlapped (case-insensitive) with the previous
+// review's hint-revealed set. 0 = no repeat miss. Only Recap (1.5) uses it.
 function scheduleCard(card, rating, missStreak) {
   missStreak = missStreak || 0;
   const now     = new Date();
   const state   = Number(card.state) || 0;
   const lr      = card.last_review ? new Date(card.last_review) : now;
-  // #7: cap elapsed at 2× scheduled_days to avoid extreme overdue distortion
+  // Elapsed in study days, capped at 2x scheduled_days (extreme overdue)
   const rawElapsed = state >= 2 ? Math.max(0, daysBetween(lr, now)) : 0;
   const schStored  = Math.max(Number(card.scheduled_days) || 1, 1);
   const elapsed    = state >= 2 ? Math.min(rawElapsed, schStored * 2) : 0;
   const s       = Math.max(Number(card.stability) || 0.1, 0.1);
-  // #6: neutral difficulty fallback (W[4] = mean difficulty), not rating-dependent
+  // Neutral difficulty fallback (W[4]), not rating-dependent
   const d       = clamp(Number(card.difficulty) || W[4], 1, 10);
   const r       = state >= 2 ? forgettingCurve(elapsed, s) : 1;
   // Recap (1.5) is only meaningful in Review state, where a "previous interval"
-  // exists to cap against. In New/Learning/Relearning states there's no such
-  // reference yet, so Recap collapses to Hard (2) — same calibrated W[] indexing
-  // as every other rating, no special-casing needed in initD/initS/sShort/nextD.
+  // exists to cap against. Elsewhere it collapses to Hard (2).
   const effRating = (rating === 1.5 && state !== 2) ? 2 : rating;
-  let newS, newD, newState, schDays;
+  let newS;
+  let newD;
+  let newState;
+  let schDays;
   if (state === 0) {                  // ── New ──
-    newD = initD(effRating); newS = initS(effRating);
-    // #1 + #2: Again/Hard → Learning step 0; Good → Learning step 1; Easy only graduates
-    if (effRating <= 2)      { newState = 1; schDays = LEARNING_STEPS[0]; }
-    else if (effRating === 3){ newState = 1; schDays = LEARNING_STEPS[1]; }
-    else                  { newState = 2; schDays = Math.max(1, Math.round(newS)); }
+    newD = initD(effRating);
+    newS = initS(effRating);
+    if (effRating <= 2) {
+      newState = 1;
+      schDays = LEARNING_STEPS[0];
+    } else if (effRating === 3) {
+      newState = 1;
+      schDays = LEARNING_STEPS[1];
+    } else {
+      newState = 2;
+      schDays = intervalDays(newS);
+    }
   } else if (state === 1) {           // ── Learning ──
-    newD = nextD(d, effRating); newS = sShort(s, effRating);
-    if (effRating === 1)      { newState = 1; schDays = LEARNING_STEPS[0]; } // Again → 10 min
-    else if (effRating === 2) { newState = 1; schDays = LEARNING_STEPS[1]; } // Hard  → 1 h
-    else                   { newState = 2; schDays = Math.max(1, Math.round(newS)); }
+    newD = nextD(d, effRating);
+    newS = sShort(s, effRating);
+    if (effRating === 1) {
+      newState = 1;
+      schDays = LEARNING_STEPS[0];    // Again → 10 min
+    } else if (effRating === 2) {
+      newState = 1;
+      schDays = LEARNING_STEPS[1];    // Hard  → 1 h
+    } else {
+      newState = 2;
+      schDays = intervalDays(newS);
+    }
   } else if (state === 2) {           // ── Review ──
     if (rating === 1.5) {
-      // Recap: S/D bookkeeping identical to Hard (calibrated, no invented weights).
-      // The scheduled interval is capped at the previous interval so it never
-      // grows past where the card already was, THEN decayed by missStreak so
-      // repeated identical-keyword misses actually shrink the interval instead
-      // of plateauing at schStored forever.
+      // Recap: difficulty as Hard; stability never grows. Repeated misses of the
+      // same keywords shrink S (and so the interval) by REPEAT_MISS_DECAY per
+      // consecutive miss. Interval never exceeds the previous one.
       newD = nextD(d, 2);
-      newS = Math.max(sRecall(d, s, r, 2), 0.1);
+      const hardS = sRecall(d, s, r, 2);
+      const decay = Math.pow(REPEAT_MISS_DECAY, missStreak);
+      newS = Math.max(Math.min(hardS, s) * decay, 0.1);
       newState = 2;
-      const hardDays = Math.max(1, Math.round(newS));
-      const capped   = Math.min(hardDays, schStored);
-      schDays = Math.max(1, Math.round(capped * Math.pow(REPEAT_MISS_DECAY, missStreak)));
+      schDays = Math.min(intervalDays(newS), schStored);
     } else if (rating === 1) {
-      newD = nextD(d, rating); newS = sForget(d, s, r); newState = 3; schDays = 0;
+      newD = nextD(d, rating);
+      newS = sForget(d, s, r);
+      newState = 3;
+      schDays = 0;
     } else {
-      newD = nextD(d, rating); newS = Math.max(sRecall(d, s, r, rating), 0.1); newState = 2; schDays = Math.max(1, Math.round(newS));
+      newD = nextD(d, rating);
+      newS = Math.max(sRecall(d, s, r, rating), 0.1);
+      newState = 2;
+      schDays = intervalDays(newS);
     }
   } else {                            // ── Relearning ──
-    newD = nextD(d, effRating); newS = sShort(s, effRating);
-    if (effRating === 1)      { newState = 3; schDays = LEARNING_STEPS[0]; } // Again → 10 min
-    else if (effRating === 2) { newState = 3; schDays = LEARNING_STEPS[1]; } // Hard  → 1 h
-    else                   { newState = 2; schDays = Math.max(1, Math.round(newS)); }
+    newD = nextD(d, effRating);
+    newS = sShort(s, effRating);
+    if (effRating === 1) {
+      newState = 3;
+      schDays = LEARNING_STEPS[0];    // Again → 10 min
+    } else if (effRating === 2) {
+      newState = 3;
+      schDays = LEARNING_STEPS[1];    // Hard  → 1 h
+    } else {
+      newState = 2;
+      schDays = intervalDays(newS);
+    }
   }
-  const due = new Date(now.getTime() + schDays * 86400000);
+  const due = dueDate(now, schDays);
   return {
     stability:      +newS.toFixed(4),
     difficulty:     +newD.toFixed(4),
@@ -741,6 +758,7 @@ function shownToRating(shown, total) {
   if (shown <= total * 0.5)   return 1.5; // Recap
   return 1;                               // Again
 }
+// @fsrs-end
 
 // ═══════════════════════════════════════════════════════════════════════════
 // App State
@@ -751,6 +769,11 @@ let shownCount   = 0;   // keyword hints revealed so far
 let shuffledKw   = [];
 let spellOpen    = false;
 let sessionStats = { total: 0, again: 0, good: 0 };
+let done         = 0;   // cards finished this session (re-queued cards count once)
+let sessionTotal = 0;   // cards at session start
+// A sub-day card (Again / lapse, 10 min step) returns after this many other
+// cards; longer steps (Hard, 1 h) return at the end of the session.
+const REQUEUE_GAP = 5;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Theme
@@ -805,8 +828,9 @@ function startSession() {
   google.script.run
     .withSuccessHandler(cards => {
       deck  = cards || [];
-      skipped = [];
       idx   = 0;
+      done  = 0;
+      sessionTotal = deck.length;
       sessionStats = { total: 0, again: 0, good: 0 };
       if (!deck.length) { showHome(); return; }
       show('s-session');
@@ -826,7 +850,7 @@ function loadCard(i) {
   titleEl.textContent = card.title || '';
   titleEl.style.display = card.title ? 'block' : 'none';
 
-  shuffledKw = [...kws].sort(() => Math.random() - 0.5);
+  shuffledKw = shuffle(kws);
   shownCount = 0;   // no hints revealed at start
 
   document.getElementById('card3d').classList.remove('flipped');
@@ -844,6 +868,16 @@ function loadCard(i) {
   renderBack(card);
   renderIntervalPreviews(card);
   clearSuggestion();
+}
+
+// Fisher–Yates (sort(() => random - .5) is biased)
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 // ── Front ──────────────────────────────────────────────────────────────────
@@ -904,9 +938,22 @@ function escHtml(s) {
 }
 
 // ── Interval preview badges ────────────────────────────────────────────────
+// Normalised keyword key for exact-overlap comparison across reviews.
+function kwKey(k) {
+  return k.normalize('NFC').trim().toLowerCase();
+}
+// Consecutive reviews whose hint-revealed keywords overlap the previous review's.
+function streakFor(card, missed) {
+  const prev = new Set(String(card.weak_keywords || '').split(';').map(kwKey));
+  const overlap = missed.some(k => prev.has(kwKey(k)));
+  return overlap ? (Number(card.miss_streak) || 0) + 1 : 0;
+}
+// Reflects the hints revealed so far, so the Recap preview is exact.
 function renderIntervalPreviews(card) {
-  [1,2,1.5,3,4].forEach(g => {
-    document.getElementById('int-' + g).textContent = formatInterval(nextInterval(card, g));
+  const streak = streakFor(card, shuffledKw.slice(0, shownCount));
+  [1, 2, 1.5, 3, 4].forEach(g => {
+    const days = nextInterval(card, g, streak);
+    document.getElementById('int-' + g).textContent = formatInterval(days);
   });
 }
 
@@ -937,8 +984,12 @@ function revealHint() {
 function flipCard() {
   const card = document.getElementById('card3d');
   card.classList.toggle('flipped');
-  if (card.classList.contains('flipped')) { applySuggestion(); }
-  else { clearSuggestion(); }
+  if (card.classList.contains('flipped')) {
+    applySuggestion();
+    renderIntervalPreviews(deck[idx]);
+  } else {
+    clearSuggestion();
+  }
 }
 function unflipCard() {
   document.getElementById('card3d').classList.remove('flipped');
@@ -954,7 +1005,7 @@ function skipCard() {
   loadCard(idx);
 }
 function updateSkipBadge() {
-  const total = deck.filter(c => c._skipped).length;
+  const total = deck.slice(idx).filter(c => c._skipped).length;
   const badge = document.getElementById('skip-count');
   badge.style.display = total > 0 ? 'inline-flex' : 'none';
   badge.textContent = total;
@@ -975,25 +1026,31 @@ function applySuggestion() {
     `Suggested: ${labels[suggested]} — ${shownCount} of ${shuffledKw.length} keywords shown`;
 }
 
+// Sub-day cards come back in this session: 10 min step after REQUEUE_GAP other
+// cards, longer steps at the end. Returns true when the card was re-queued.
+function requeue(card) {
+  const days = Number(card.scheduled_days);
+  if (days >= 1) {
+    return false;
+  }
+  let at = deck.length;
+  if (days <= LEARNING_STEPS[0]) {
+    at = idx + 1 + Math.min(REQUEUE_GAP, deck.length - idx - 1);
+  }
+  deck.splice(at, 0, card);
+  return true;
+}
+
 function rate(rating) {
   const card = deck[idx];
 
-  // Keywords the user needed a hint for THIS review (exact text), counted
-  // at rating time — this is the "unrecalled" signal per the current
-  // definition (hint-revealed set at the moment the rating is clicked).
-  const missedThisReview = shuffledKw.slice(0, shownCount);
-  const prevWeak = String(card.weak_keywords || '')
-    .split(';').map(k => k.trim()).filter(Boolean);
-
-  // Exact-text overlap between this review's misses and last review's misses.
-  const overlap = missedThisReview.filter(k => prevWeak.includes(k));
-  const missStreak = overlap.length > 0
-    ? (Number(card.miss_streak) || 0) + 1
-    : 0;
+  // Keywords the user needed a hint for THIS review, at the moment of rating
+  const missed     = shuffledKw.slice(0, shownCount);
+  const missStreak = streakFor(card, missed);
 
   const fsrs = scheduleCard(card, rating, missStreak);
-  fsrs.weak_keywords = missedThisReview.join(';');
-  fsrs.miss_streak    = missStreak;
+  fsrs.weak_keywords = missed.join(';');
+  fsrs.miss_streak   = missStreak;
 
   Object.assign(card, fsrs);
   delete card._skipped;
@@ -1001,7 +1058,14 @@ function rate(rating) {
     .withFailureHandler(e => { console.error('updateCard failed:', e); alert('Failed to save: ' + e.message); })
     .updateCard(card.id, fsrs);
   sessionStats.total++;
-  if (rating === 1) sessionStats.again++; else sessionStats.good++;
+  if (rating === 1) {
+    sessionStats.again++;
+  } else {
+    sessionStats.good++;
+  }
+  if (!requeue(card)) {
+    done++;
+  }
   idx++;
   if (idx >= deck.length) {
     document.getElementById('cs-total').textContent = sessionStats.total;
@@ -1009,7 +1073,9 @@ function rate(rating) {
     document.getElementById('cs-good').textContent  = sessionStats.good;
     show('s-complete');
   } else {
-    updateProgress(); loadCard(idx); updateSkipBadge();
+    updateProgress();
+    loadCard(idx);
+    updateSkipBadge();
   }
 }
 
@@ -1107,8 +1173,7 @@ function checkSpelling() {
 
 // ── Progress ───────────────────────────────────────────────────────────────
 function updateProgress() {
-  const total = deck.length;
-  const done  = idx;
+  const total = sessionTotal;
   const pct   = total > 0 ? Math.round(done / total * 100) : 0;
   document.getElementById('prog-text').textContent = `${done} / ${total}`;
   document.getElementById('prog-pct').textContent  = pct + '%';
