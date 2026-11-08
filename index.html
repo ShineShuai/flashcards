@@ -3,6 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<script>
+// Saved or system theme before first paint (no light flash in dark mode)
+(function () {
+  var theme = null;
+  try {
+    theme = localStorage.getItem('fc-theme');
+  } catch (e) {
+    theme = null;
+  }
+  if (!theme) {
+    var dark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+    theme = dark ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', theme);
+})();
+</script>
 <title>⚡ Flash</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,700;0,900;1,400&family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+KR:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -19,11 +36,18 @@
   --surface:   #FFFFFF;
   --surface2:  #F8F5FF;
   --text:      #14142B;
-  --text2:     #6B6894;
+  --text2:     #5E5B87;
   --border:    rgba(124,58,255,0.15);
   --shadow:    0 8px 40px rgba(124,58,255,0.14);
   --shadow-sm: 0 2px 12px rgba(124,58,255,0.10);
   --radius:    20px;
+  /* text-safe accents (>= 4.5:1 on white and on --bg2) */
+  --mint-t:    #00704D;
+  --blue-t:    #006EA8;
+  --amber-t:   #8A5F00;
+  --pink-t:    #C8105A;
+  --purple-t:  #7C3AFF;
+  --on-bright: #14142B;
 }
 [data-theme="dark"] {
   --bg:       #07071A;
@@ -35,13 +59,19 @@
   --border:   rgba(124,58,255,0.28);
   --shadow:   0 8px 40px rgba(124,58,255,0.30);
   --shadow-sm:0 2px 12px rgba(124,58,255,0.20);
+  --mint-t:   var(--mint);
+  --blue-t:   var(--blue);
+  --amber-t:  var(--amber);
+  --pink-t:   var(--pink);
+  --purple-t: #9C7BFF;
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  font-family: 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans SC', 'Noto Sans', sans-serif;
+  font-family: 'Noto Sans', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans SC', sans-serif;
   background: var(--bg);
   color: var(--text);
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
   transition: background .3s, color .3s;
 }
@@ -89,13 +119,18 @@ body::before {
   display: flex; align-items: center; justify-content: center;
   transition: transform .2s, background .3s;
 }
-.icon-btn:hover { transform: scale(1.1) rotate(12deg); }
+.icon-btn:hover { background: var(--bg2); }
+@media (hover: hover) {
+  .icon-btn:hover { transform: scale(1.1) rotate(12deg); }
+}
+button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .screen {
   position: relative; z-index: 1;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  padding: 68px 16px 32px;
+  padding: 68px 16px calc(32px + env(safe-area-inset-bottom, 0px));
 }
 .hidden { display: none !important; }
 .panel {
@@ -122,9 +157,9 @@ body::before {
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   background-clip: text;
 }
-.stat-num.mint  { background: linear-gradient(135deg, var(--mint), var(--blue));
+.stat-num.mint  { background: linear-gradient(135deg, var(--mint-t), var(--blue-t));
                   -webkit-background-clip: text; background-clip: text; }
-.stat-num.amber { background: linear-gradient(135deg, var(--amber), var(--pink));
+.stat-num.amber { background: linear-gradient(135deg, var(--amber-t), var(--pink-t));
                   -webkit-background-clip: text; background-clip: text; }
 .stat-label { font-size: .68rem; font-weight: 700; text-transform: uppercase;
               letter-spacing: .08em; color: var(--text2); }
@@ -137,23 +172,25 @@ body::before {
   cursor: pointer; white-space: nowrap;
   transition: transform .15s, box-shadow .15s, opacity .15s, background .2s;
 }
-.btn:hover:not(:disabled) { transform: translateY(-2px); }
+@media (hover: hover) {
+  .btn:hover:not(:disabled) { transform: translateY(-2px); }
+}
 .btn:active:not(:disabled) { transform: translateY(0) scale(.98); }
 .btn:disabled { opacity: .4; cursor: not-allowed; }
 .btn-block { width: 100%; }
 .btn-primary {
-  background: linear-gradient(135deg, var(--purple) 0%, var(--pink) 100%);
+  background: linear-gradient(135deg, var(--purple) 0%, #D4145F 100%);
   color: #fff; box-shadow: 0 4px 20px rgba(124,58,255,.40);
 }
 .btn-secondary { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }
 .btn-hint {
-  background: transparent; color: var(--purple);
-  border: 1.5px solid var(--purple); padding: 10px 20px; font-size: .88rem;
+  background: transparent; color: var(--purple-t);
+  border: 1.5px solid var(--purple-t); padding: 10px 20px; font-size: .88rem;
 }
 .btn-hint:hover:not(:disabled) { background: rgba(124,58,255,.08); }
 .btn-flip {
   background: linear-gradient(135deg, var(--amber) 0%, #FF8C00 100%);
-  color: #fff; box-shadow: 0 4px 16px rgba(255,184,0,.40);
+  color: var(--on-bright); box-shadow: 0 4px 16px rgba(255,184,0,.40);
   padding: 10px 20px; font-size: .88rem;
 }
 .btn-skip {
@@ -163,13 +200,13 @@ body::before {
 .btn-skip:hover:not(:disabled) { background: rgba(124,58,255,.06); color: var(--text); }
 .skip-badge {
   display: inline-flex; align-items: center; justify-content: center;
-  background: rgba(255,184,0,.18); color: var(--amber);
+  background: rgba(255,184,0,.18); color: var(--amber-t);
   border-radius: 100px; font-size: .62rem; font-weight: 700;
   padding: 1px 6px; margin-left: 5px; letter-spacing: .04em;
 }
 .btn-spell {
-  background: transparent; color: var(--mint);
-  border: 1.5px solid var(--mint); padding: 10px 20px; font-size: .88rem;
+  background: transparent; color: var(--mint-t);
+  border: 1.5px solid var(--mint-t); padding: 10px 20px; font-size: .88rem;
 }
 .btn-spell:hover:not(:disabled) { background: rgba(0,214,143,.08); }
 .rating-grid {
@@ -177,30 +214,41 @@ body::before {
   gap: 8px; margin-top: 18px;
 }
 .btn-rate {
-  padding: 11px 6px; font-size: .8rem; font-weight: 700;
+  padding: 11px 6px; font-size: .8rem; font-weight: 700; min-height: 48px;
   border-radius: 12px; color: #fff; border: none;
   cursor: pointer; font-family: inherit;
   transition: transform .15s, box-shadow .15s, outline .1s;
   position: relative;
 }
-.btn-rate:hover { transform: translateY(-2px) scale(1.03); }
+@media (hover: hover) {
+  .btn-rate:hover { transform: translateY(-2px) scale(1.03); }
+}
 .btn-rate:active { transform: scale(.97); }
 .btn-rate .interval-badge {
-  display: block; font-size: .65rem; font-weight: 400; opacity: .85; margin-top: 2px;
+  display: block; font-size: .75rem; font-weight: 400; margin-top: 2px;
 }
-.btn-again { background: #FF2D87; box-shadow: 0 3px 14px rgba(255,45,135,.40); }
-.btn-recap { background: #FFB000; box-shadow: 0 3px 14px rgba(255,176,0,.40); }
-.btn-hard  { background: #FF7A00; box-shadow: 0 3px 14px rgba(255,122,0,.40); }
+.btn-again { background: #D4145F; box-shadow: 0 3px 14px rgba(212,20,95,.40); }
+.btn-recap {
+  background: #FFB000; color: var(--on-bright);
+  box-shadow: 0 3px 14px rgba(255,176,0,.40);
+}
+.btn-hard  {
+  background: #FF7A00; color: var(--on-bright);
+  box-shadow: 0 3px 14px rgba(255,122,0,.40);
+}
 .btn-good  { background: #7C3AFF; box-shadow: 0 3px 14px rgba(124,58,255,.40); }
-.btn-easy  { background: #00A870; box-shadow: 0 3px 14px rgba(0,168,112,.40); }
+.btn-easy  {
+  background: #00A870; color: var(--on-bright);
+  box-shadow: 0 3px 14px rgba(0,168,112,.40);
+}
 .btn-rate.suggested {
-  outline: 3px solid rgba(255,255,255,0.85);
+  outline: 3px solid var(--text);
   outline-offset: 2px; transform: scale(1.06);
 }
 .rating-hint { text-align: center; font-size: .7rem; color: var(--text2); margin-top: 8px; }
 .progress-wrap { width: 100%; max-width: 860px; margin-bottom: 14px; }
 .progress-meta {
-  display: flex; justify-content: space-between;
+  display: flex; justify-content: space-between; align-items: center;
   font-size: .72rem; color: var(--text2); margin-bottom: 5px; font-weight: 600;
 }
 .progress-track { height: 5px; background: var(--bg2); border-radius: 100px; overflow: hidden; }
@@ -212,6 +260,7 @@ body::before {
 .card-scene { width: 100%; max-width: 860px; perspective: 1200px; margin-bottom: 14px; }
 .card-3d {
   width: 100%; min-height: clamp(420px, 62vh, 780px);
+  min-height: clamp(420px, 62dvh, 780px);
   position: relative; transform-style: preserve-3d;
   transition: transform .55s cubic-bezier(.4,0,.2,1);
 }
@@ -223,6 +272,7 @@ body::before {
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 24px 22px; overflow-y: auto;
   min-height: clamp(420px, 62vh, 780px);
+  min-height: clamp(420px, 62dvh, 780px);
   display: flex; flex-direction: column; transition: background .3s;
 }
 .card-face-back { transform: rotateY(180deg); }
@@ -270,7 +320,7 @@ body::before {
 .kw-pill.spell-slot.correct {
   border-color: var(--mint); border-style: solid;
   background: rgba(0,214,143,.08) !important;
-  color: #00956A; -webkit-text-fill-color: #00956A;
+  color: var(--mint-t); -webkit-text-fill-color: var(--mint-t);
 }
 .kw-pill.spell-slot.wrong {
   border-color: var(--pink); border-style: solid;
@@ -280,11 +330,11 @@ body::before {
   color: var(--mint); -webkit-text-fill-color: var(--mint);
 }
 /* Accent colors for revealed pills */
-.kw-pill:nth-child(5n+1) { background:rgba(255,45,135,.12);  color:var(--pink); }
-.kw-pill:nth-child(5n+2) { background:rgba(124,58,255,.12);  color:var(--purple); }
-.kw-pill:nth-child(5n+3) { background:rgba(0,214,143,.12);   color:#00956A; }
-.kw-pill:nth-child(5n+4) { background:rgba(255,184,0,.12);   color:#B88000; }
-.kw-pill:nth-child(5n+5) { background:rgba(0,180,255,.12);   color:#0090CC; }
+.kw-pill:nth-child(5n+1) { background:rgba(255,45,135,.12);  color:var(--pink-t); }
+.kw-pill:nth-child(5n+2) { background:rgba(124,58,255,.12);  color:var(--purple-t); }
+.kw-pill:nth-child(5n+3) { background:rgba(0,214,143,.12);   color:var(--mint-t); }
+.kw-pill:nth-child(5n+4) { background:rgba(255,184,0,.12);   color:var(--amber-t); }
+.kw-pill:nth-child(5n+5) { background:rgba(0,180,255,.12);   color:var(--blue-t); }
 [data-theme="dark"] .kw-pill:nth-child(5n+3) { color:var(--mint); }
 [data-theme="dark"] .kw-pill:nth-child(5n+4) { color:var(--amber); }
 [data-theme="dark"] .kw-pill:nth-child(5n+5) { color:var(--blue); }
@@ -296,6 +346,9 @@ body::before {
   display: flex; gap: 10px; justify-content: center;
   margin-top: 18px; flex-wrap: wrap;
 }
+/* primary action on its own row, secondary actions share the row below */
+.front-actions .btn-flip { order: -1; flex: 1 1 100%; padding: 14px 24px; font-size: 1rem; }
+.front-actions .btn:not(.btn-flip) { flex: 1 1 0; min-width: 0; padding: 10px 12px; }
 .hint-status { text-align: center; font-size: .7rem; color: var(--text2); margin-top: 8px; }
 /* ── Spell result + actions ── */
 .spell-result {
@@ -356,32 +409,69 @@ body::before {
   display: inline-block; padding: 2px 8px; border-radius: 100px;
   font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing:.06em;
 }
-.badge-new      { background: rgba(0,180,255,.15); color: var(--blue); }
-.badge-learning { background: rgba(255,184,0,.15);  color: var(--amber); }
-.badge-review   { background: rgba(124,58,255,.15); color: var(--purple); }
-.badge-relearn  { background: rgba(255,45,135,.15); color: var(--pink); }
+.badge-new      { background: rgba(0,180,255,.15); color: var(--blue-t); }
+.badge-learning { background: rgba(255,184,0,.15);  color: var(--amber-t); }
+.badge-review   { background: rgba(124,58,255,.15); color: var(--purple-t); }
+.badge-relearn  { background: rgba(255,45,135,.15); color: var(--pink-t); }
 .docs-link {
-  font-size: .75rem; font-weight: 600; color: var(--text2);
-  text-decoration: none; padding: 4px 10px; border-radius: 100px;
+  font-family: inherit; font-size: .75rem; font-weight: 600; color: var(--text2);
+  background: none; cursor: pointer;
+  text-decoration: none; padding: 6px 12px; border-radius: 100px;
   border: 1px solid var(--border); transition: color .15s, background .15s;
 }
-.docs-link:hover { color: var(--purple); background: rgba(124,58,255,.08); }
+.docs-link:hover { color: var(--purple-t); background: rgba(124,58,255,.08); }
 /* ── Save status pill (pending / failed saves) ── */
 .save-status {
   position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
   padding: 6px 14px; border-radius: 100px; z-index: 300; display: none;
   background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
   font-size: .75rem; font-weight: 600; color: var(--text2);
+  pointer-events: none;
 }
 .save-status.error { color: var(--pink); border-color: var(--pink); }
-#docs-modal { position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column; }
+#docs-modal {
+  position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column;
+  background: var(--bg);
+}
+.docs-bar {
+  flex: none; height: 52px; padding: 0 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border); font-weight: 700; font-size: .9rem;
+}
 #docs-content { flex: 1; display: flex; overflow: hidden; }
+.docs-loading { margin: auto; color: var(--text2); font-size: .85rem; }
+/* ── Undo, keyboard hints ── */
+.btn-undo {
+  font-family: inherit; font-size: .72rem; font-weight: 700; color: var(--text2);
+  background: none; border: none; border-radius: 100px; padding: 2px 8px; cursor: pointer;
+}
+.btn-undo:hover:not(:disabled) { color: var(--purple-t); background: rgba(124,58,255,.08); }
+.btn-undo:disabled { opacity: .4; cursor: default; }
+.k {
+  font-family: inherit; font-size: .66rem; font-weight: 700; opacity: .75;
+  border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-left: 6px;
+}
+.btn-rate .k {
+  position: absolute; top: 3px; left: 4px; margin: 0;
+  font-size: .6rem; padding: 0 3px;
+}
+@media (hover: none) { .k { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+@media (max-width: 640px) {
+  /* card fills the screen so the rating row sits in the thumb zone */
+  .card-3d, .card-face { min-height: max(380px, calc(100dvh - 176px)); }
+}
 @media (max-width: 420px) {
-  .rating-grid { grid-template-columns: repeat(3, 1fr); }
+  .rating-grid { gap: 6px; }          /* five columns on every phone */
   .stats-grid  { grid-template-columns: repeat(3, 1fr); }
   .panel, .card-face { padding: 18px 14px; }
   .stat-num { font-size: 1.5rem; }
-  .btn-rate { padding: 9px 4px; font-size: .72rem; }
+  .btn-rate { padding: 9px 2px; font-size: .72rem; }
 }
 </style>
 </head>
@@ -390,9 +480,11 @@ body::before {
 <div class="top-bar">
   <div class="logo">⚡ Flash</div>
   <div class="top-actions">
-    <a class="docs-link" onclick="openDocs()" style="cursor:pointer;">📖 Docs</a>
-    <button class="icon-btn" id="docsBtn" onclick="openDocsNewTab()" title="Open docs in new tab">↗</button>
-    <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme">🌙</button>
+    <button class="docs-link" id="docs-link" onclick="openDocs()">📖 Docs</button>
+    <button class="icon-btn" id="docsBtn" onclick="openDocsNewTab()" title="Open docs in new tab"
+      aria-label="Open documentation in a new tab">↗</button>
+    <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme"
+      aria-label="Toggle light/dark theme">🌙</button>
   </div>
 </div>
 
@@ -428,9 +520,12 @@ body::before {
   <div class="progress-wrap">
     <div class="progress-meta">
       <span id="prog-text">0 / 0</span>
+      <button class="btn-undo" id="btn-undo" onclick="undoRating()" disabled
+        aria-label="Undo last rating">↶ Undo <kbd class="k">Z</kbd></button>
       <span id="prog-pct">0%</span>
     </div>
-    <div class="progress-track">
+    <div class="progress-track" role="progressbar" id="prog-bar" aria-label="Session progress"
+      aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
       <div class="progress-fill" id="prog-fill" style="width:0%"></div>
     </div>
   </div>
@@ -451,15 +546,22 @@ body::before {
         <div class="card-title" id="card-title"></div>
         <div class="keywords-area" id="kw-area"></div>
         <div class="front-actions">
-          <button class="btn btn-hint" id="btn-hint" onclick="revealHint()">＋ Hint</button>
-          <button class="btn btn-spell" id="btn-spell" onclick="toggleSpell()">✎ Spell</button>
-          <button class="btn btn-flip" onclick="flipCard()">↩ Flip</button>
+          <button class="btn btn-hint" id="btn-hint" onclick="revealHint()">
+            ＋ Hint<kbd class="k">H</kbd>
+          </button>
+          <button class="btn btn-spell" id="btn-spell" onclick="toggleSpell()">
+            ✎ Spell<kbd class="k">S</kbd>
+          </button>
+          <button class="btn btn-flip" onclick="flipCard()">
+            Show answer<kbd class="k">Space</kbd>
+          </button>
           <button class="btn btn-skip" id="btn-skip" onclick="skipCard()">
             ⤳ Skip<span class="skip-badge" id="skip-count" style="display:none"></span>
+            <kbd class="k">K</kbd>
           </button>
         </div>
-        <div class="hint-status" id="hint-status"></div>
-        <div class="spell-result" id="spell-result"></div>
+        <div class="hint-status" id="hint-status" aria-live="polite"></div>
+        <div class="spell-result" id="spell-result" aria-live="polite"></div>
         <div class="spell-actions" id="spell-actions">
           <button class="btn btn-spell" onclick="checkSpelling()">✔ Check</button>
           <button class="btn btn-secondary" style="padding:10px 20px;font-size:.88rem"
@@ -471,28 +573,30 @@ body::before {
       <div class="card-face card-face-back" id="face-back" inert>
         <div class="card-meta">
           <span>Answer</span>
-          <button class="btn btn-flip" onclick="unflipCard()">↪ Flip</button>
+          <button class="btn btn-flip" onclick="unflipCard()">
+            ← Hints<kbd class="k">Esc</kbd>
+          </button>
           <span id="back-type-badge" class="card-meta-tag">text</span>
         </div>
         <div class="back-content" id="back-content"></div>
         <div class="rating-grid">
           <button class="btn-rate btn-again" onclick="rate(1)">
-            Again<span class="interval-badge" id="int-1"></span>
+            Again<span class="interval-badge" id="int-1"></span><kbd class="k">1</kbd>
           </button>
           <button class="btn-rate btn-recap" onclick="rate(1.5)">
-            Recap<span class="interval-badge" id="int-1.5"></span>
+            Recap<span class="interval-badge" id="int-1.5"></span><kbd class="k">2</kbd>
           </button>
           <button class="btn-rate btn-hard" onclick="rate(2)">
-            Hard<span class="interval-badge" id="int-2"></span>
+            Hard<span class="interval-badge" id="int-2"></span><kbd class="k">3</kbd>
           </button>
           <button class="btn-rate btn-good" onclick="rate(3)">
-            Good<span class="interval-badge" id="int-3"></span>
+            Good<span class="interval-badge" id="int-3"></span><kbd class="k">4</kbd>
           </button>
           <button class="btn-rate btn-easy" onclick="rate(4)">
-            Easy<span class="interval-badge" id="int-4"></span>
+            Easy<span class="interval-badge" id="int-4"></span><kbd class="k">5</kbd>
           </button>
         </div>
-        <div class="rating-hint" id="rating-hint"></div>
+        <div class="rating-hint" id="rating-hint" aria-live="polite"></div>
       </div>
 
     </div>
@@ -518,18 +622,21 @@ body::before {
         <div class="cs-lbl">Good+</div>
       </div>
     </div>
-    <button class="btn btn-primary btn-block" onclick="showHome()">↩ Home</button>
+    <button class="btn btn-secondary btn-block hidden" id="btn-undo-done" onclick="undoRating()"
+      style="margin-bottom:10px">↶ Undo last rating</button>
+    <button class="btn btn-primary btn-block" onclick="showHome()">
+      ↩ Home<kbd class="k">Enter</kbd>
+    </button>
   </div>
 </div>
 
-<div id="docs-modal" class="hidden">
-  <button onclick="closeDocs()" style="
-    position:fixed; top:12px; right:16px;
-    background:none; border:none; font-size:1.5rem;
-    cursor:pointer; color:var(--pink); z-index:501;"
-    onmouseover="this.style.color='var(--amber)'; this.style.transform='scale(1.2)'"
-    onmouseout="this.style.color='var(--pink)'; this.style.transform='scale(1)'">✕</button>
-  <div id="docs-content"></div>
+<div id="docs-modal" class="hidden" role="dialog" aria-modal="true" aria-label="Documentation">
+  <div class="docs-bar">
+    <span>📖 Documentation</span>
+    <button class="icon-btn" id="docs-close" onclick="closeDocs()"
+      aria-label="Close documentation">✕</button>
+  </div>
+  <div id="docs-content"><div class="docs-loading" id="docs-loading">Loading…</div></div>
 </div>
 
 <div class="save-status" id="save-status" role="status" aria-live="polite"></div>
@@ -545,20 +652,31 @@ function openDocsNewTab() {
 function openDocs() {
   const modal = document.getElementById('docs-modal');
   modal.classList.remove('hidden');
+  document.getElementById('docs-close').focus();
   if (_docsBlobUrl) return; // already loaded for this session
   google.script.run
     .withSuccessHandler(html => {
       const blob = new Blob([html], { type: 'text/html' });
       _docsBlobUrl = URL.createObjectURL(blob);
       const iframe = document.createElement('iframe');
+      iframe.title = 'Documentation';
       iframe.src = _docsBlobUrl;
       iframe.style.cssText = 'width:100%;height:100%;border:none;';
+      iframe.addEventListener('load', () => {
+        const loading = document.getElementById('docs-loading');
+        if (loading) loading.remove();
+      });
       document.getElementById('docs-content').appendChild(iframe);
+    })
+    .withFailureHandler(err => {
+      document.getElementById('docs-loading').textContent =
+        'Could not load the documentation: ' + err.message;
     })
     .getDocsHtml();
 }
 function closeDocs() {
   document.getElementById('docs-modal').classList.add('hidden');
+  document.getElementById('docs-link').focus();
 }
 window.addEventListener('beforeunload', () => {
   if (_docsBlobUrl) { URL.revokeObjectURL(_docsBlobUrl); _docsBlobUrl = null; }
@@ -793,6 +911,12 @@ let cardShownAt = 0;    // Date.now() when the current card was shown (review du
 let homeCards   = null; // due cards prefetched by bootstrap(); consumed by startSession
 let homeAt      = 0;
 const HOME_CACHE_MS = 5 * 60 * 1000;
+// Fields a review changes; a snapshot of them makes the last rating undoable
+const FSRS_KEYS = [
+  'stability', 'difficulty', 'elapsed_days', 'scheduled_days', 'reps', 'lapses',
+  'state', 'last_review', 'due', 'weak_keywords', 'miss_streak'
+];
+let lastRating = null;   // { card, prev, rating, at, requeued, undoneTime }
 const SAVE_WAIT_MS  = 8000;   // max wait for pending saves before reading from the server
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -820,8 +944,12 @@ function toggleTheme() {
   document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
   storageSet('fc-theme', next);
 }
+function systemTheme() {
+  const dark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+  return dark ? 'dark' : 'light';
+}
 function initTheme() {
-  const saved = storageGet('fc-theme') || 'light';
+  const saved = storageGet('fc-theme') || systemTheme();
   document.documentElement.setAttribute('data-theme', saved);
   document.getElementById('themeBtn').textContent = saved === 'dark' ? '☀️' : '🌙';
 }
@@ -985,6 +1113,8 @@ function beginSession(cards) {
   done  = 0;
   sessionTotal = deck.length;
   sessionStats = { total: 0, again: 0, good: 0 };
+  lastRating = null;
+  updateUndoState();
   if (!deck.length) { showHome(); return; }
   show('s-session');
   updateProgress();
@@ -1168,6 +1298,7 @@ function revealHint() {
   shownCount++;
   renderFront();
   if (spellOpen) {
+    clearSpellResult();
     focusSpell();
   }
 }
@@ -1248,6 +1379,10 @@ function rate(rating) {
   const missStreak = streakFor(card, missed);
 
   const stateBefore = Number(card.state) || 0;
+  const prev = {};
+  FSRS_KEYS.forEach(k => {
+    prev[k] = (k in card) ? card[k] : '';
+  });
   const fsrs = scheduleCard(card, rating, missStreak);
   fsrs.weak_keywords = missed.join(';');
   fsrs.miss_streak   = missStreak;
@@ -1267,9 +1402,12 @@ function rate(rating) {
   } else {
     sessionStats.good++;
   }
-  if (!requeue(card)) {
+  const requeued = requeue(card);
+  if (!requeued) {
     done++;
   }
+  lastRating = { card, prev, rating, at: idx, requeued, undoneTime: fsrs.last_review };
+  updateUndoState();
   idx++;
   if (idx >= deck.length) {
     document.getElementById('cs-total').textContent = sessionStats.total;
@@ -1282,6 +1420,152 @@ function rate(rating) {
     updateSkipBadge();
   }
 }
+
+// ── Undo ───────────────────────────────────────────────────────────────────
+function updateUndoState() {
+  const can = !!lastRating;
+  document.getElementById('btn-undo').disabled = !can;
+  document.getElementById('btn-undo-done').classList.toggle('hidden', !can);
+}
+
+// Reverts the last rating: card fields, session counters, queue position, and
+// (through the save queue, so after the original save) the sheet and the log.
+function undoRating() {
+  const u = lastRating;
+  if (!u) {
+    return;
+  }
+  lastRating = null;
+  Object.assign(u.card, u.prev);
+  delete u.card._skipped;
+  sessionStats.total--;
+  if (u.rating === 1) {
+    sessionStats.again--;
+  } else {
+    sessionStats.good--;
+  }
+  if (u.requeued) {
+    const copy = deck.indexOf(u.card, u.at + 1);
+    if (copy >= 0) {
+      deck.splice(copy, 1);
+    }
+  } else {
+    done--;
+  }
+  idx = u.at;
+  enqueueSave(u.card.id, u.prev, { undo: true, undone_time: u.undoneTime });
+  show('s-session');
+  updateProgress();
+  loadCard(idx);
+  updateUndoState();
+}
+
+// ── Keyboard ───────────────────────────────────────────────────────────────
+const RATING_KEYS = new Map([['1', 1], ['2', 1.5], ['3', 2], ['4', 3], ['5', 4]]);
+
+function isShown(id) {
+  return !document.getElementById(id).classList.contains('hidden');
+}
+
+function sessionKey(key, mod, onButton) {
+  if (key === 'z' || (key === 'u' && !mod)) {
+    undoRating();
+    return true;
+  }
+  if (mod) {
+    return false;
+  }
+  if (isFlipped()) {
+    if (RATING_KEYS.has(key)) {
+      rate(RATING_KEYS.get(key));
+      return true;
+    }
+    if (key === 'Enter' && !onButton) {
+      const suggested = document.querySelector('.btn-rate.suggested');
+      if (suggested) {
+        suggested.click();
+      }
+      return true;
+    }
+    if (key === 'Escape' || key === 'Backspace') {
+      unflipCard();
+      return true;
+    }
+    return false;
+  }
+  if ((key === ' ' || key === 'Enter') && !onButton) {
+    flipCard();
+    return true;
+  }
+  if (key === 'h') {
+    if (!document.getElementById('btn-hint').disabled) {
+      revealHint();
+    }
+    return true;
+  }
+  if (key === 's') {
+    toggleSpell();
+    return true;
+  }
+  if (key === 'k') {
+    if (!document.getElementById('btn-skip').disabled) {
+      skipCard();
+    }
+    return true;
+  }
+  return false;
+}
+
+function onKeyDown(e) {
+  const el = e.target;
+  if (e.defaultPrevented || e.altKey) {
+    return;
+  }
+  if (el.matches && el.matches('input, textarea, select, [contenteditable]')) {
+    return;
+  }
+  const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  if (isShown('docs-modal')) {
+    if (key === 'Escape') {
+      closeDocs();
+      e.preventDefault();
+    }
+    return;
+  }
+  const mod = e.ctrlKey || e.metaKey;
+  // Space/Enter on a focused button keep their native meaning (click)
+  const onButton = !!(el.closest && el.closest('button, a'));
+  let handled = false;
+  if (isShown('s-session')) {
+    handled = sessionKey(key, mod, onButton);
+  } else if (isShown('s-complete')) {
+    if (key === 'Enter' && !onButton) {
+      showHome();
+      handled = true;
+    } else if (key === 'z') {
+      undoRating();
+      handled = true;
+    }
+  } else if (isShown('s-home')) {
+    const start = document.getElementById('startBtn');
+    if (key === 'Enter' && !onButton && !start.disabled) {
+      startSession();
+      handled = true;
+    }
+  }
+  if (handled) {
+    e.preventDefault();
+  }
+}
+document.addEventListener('keydown', onKeyDown);
+// After a mouse or touch click, focus leaves the button so Space/Enter act on
+// the card instead of re-triggering it (keyboard clicks have detail 0).
+document.addEventListener('click', e => {
+  const button = e.target.closest && e.target.closest('button');
+  if (button && e.detail > 0) {
+    button.blur();
+  }
+});
 
 // ── Spell check ────────────────────────────────────────────────────────────
 // @spell-begin
@@ -1369,6 +1653,11 @@ function resetSpell() {
   // renderFront() called by loadCard immediately after
 }
 
+function clearSpellResult() {
+  document.getElementById('spell-result').textContent = '';
+  document.getElementById('spell-result').style.display = 'none';
+}
+
 function clearSpell() {
   document.querySelectorAll('.spell-slot').forEach(inp => {
     inp.value = '';
@@ -1428,6 +1717,7 @@ function updateProgress() {
   document.getElementById('prog-text').textContent = `${done} / ${total}`;
   document.getElementById('prog-pct').textContent  = pct + '%';
   document.getElementById('prog-fill').style.width = pct + '%';
+  document.getElementById('prog-bar').setAttribute('aria-valuenow', pct);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

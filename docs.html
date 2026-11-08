@@ -682,6 +682,25 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p><strong>Saving.</strong> Ratings are written to the sheet in the background, one at a time and in order. A small indicator shows pending saves; if the connection fails they are retried with growing delays (2 s up to 30 s) and kept in the browser until the sheet confirms them, so closing the tab does not lose them (the browser warns while saves are pending). Home waits for pending saves before it reads the sheet. Home loads the stats and the due cards in one read, and Start reuses them for up to five minutes.</p>
 
+<h3>Keyboard shortcuts</h3>
+<table>
+  <thead><tr><th>Key</th><th>Where</th><th>Action</th></tr></thead>
+  <tbody>
+    <tr><td><code>Space</code> / <code>Enter</code></td><td>Front</td><td>Show answer</td></tr>
+    <tr><td><code>H</code></td><td>Front</td><td>Reveal a hint</td></tr>
+    <tr><td><code>S</code></td><td>Front</td><td>Spell mode on/off</td></tr>
+    <tr><td><code>K</code></td><td>Front</td><td>Skip</td></tr>
+    <tr><td><code>1</code> <code>2</code> <code>3</code> <code>4</code> <code>5</code></td><td>Answer</td><td>Again · Recap · Hard · Good · Easy</td></tr>
+    <tr><td><code>Enter</code></td><td>Answer</td><td>Rate with the suggested button</td></tr>
+    <tr><td><code>Esc</code> / <code>Backspace</code></td><td>Answer</td><td>Back to the hints</td></tr>
+    <tr><td><code>Z</code> (or Ctrl/Cmd+Z)</td><td>Session, done screen</td><td>Undo the last rating</td></tr>
+    <tr><td><code>Enter</code></td><td>Home, done screen</td><td>Start review / back to home</td></tr>
+  </tbody>
+</table>
+<p>Shortcuts are ignored while you type in a spell field, and Space/Enter on a button you focused with Tab keep their normal meaning. Buttons show their key on devices with a pointer. The theme follows the system setting until you toggle it; your choice is then remembered.</p>
+
+<p><strong>Undo.</strong> <strong>↶ Undo</strong> (next to the progress counter, and on the done screen) reverts the most recent rating: the card returns to its previous schedule, the session counters and queue position are restored, the sheet gets the previous values back and the review's row is removed from <code>review_log</code>. The undo travels through the save queue after the original save, so the order is always right.</p>
+
 <p><strong>Study day.</strong> A new day starts at 04:00 local time. Intervals of one day or more are due at 04:00 of the target day, so a card reviewed at 23:00 with a 1-day interval is due at 04:00 the next morning. Sub-day steps stay exact timestamps.</p>
 
 <!-- ── Keywords ────────────────────────────────────────────────────────── -->
@@ -689,7 +708,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p>When a card loads, the front shows only the <strong>title</strong> — no keyword pills are visible yet. Ghost placeholder pills show how many keywords exist.</p>
 
-<p>Click <strong>＋ Hint</strong> to reveal one keyword per click. The hint picker avoids revealing keywords you have already attempted in Spell Check (see below). Click <strong>↩ Flip</strong> at any point to see the answer on the back.</p>
+<p>Click <strong>＋ Hint</strong> to reveal one keyword per click. The hint picker avoids revealing keywords you have already attempted in Spell Check (see below). Click <strong>Show answer</strong> (Space) at any point to see the answer on the back; <strong>← Hints</strong> (Esc) turns the card back.</p>
 
 <p>The number of hints needed determines the suggested rating. Bands are compared against exact fractions of the card's total keyword count (no rounding):</p>
 

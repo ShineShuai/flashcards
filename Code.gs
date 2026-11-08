@@ -208,7 +208,7 @@ function bootstrap() {
 // Writes FSRS fields back to the row matching id: one id-column read and one
 // setValues per run of adjacent columns. Columns are located by header name, so
 // extra columns and any column order are fine. meta (optional) is logged to the
-// review_log sheet.
+// review_log sheet; meta.undo removes that review's log row instead.
 
 function writeFields_(sheet, row, headers, fsrs) {
   const cells = FSRS_FIELDS
@@ -257,6 +257,30 @@ function logReview_(id, fsrs, meta) {
   }
 }
 
+// Undo of a review: drop its row from the log (matched by card id + review time).
+// Idempotent: a retried undo finds nothing to delete.
+function unlogReview_(id, reviewTime) {
+  if (!reviewTime) return;
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);   // appendRow elsewhere must not shift rows under us
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(LOG_SHEET_NAME);
+    const last  = sheet ? sheet.getLastRow() : 0;
+    if (last < 2) return;
+    const keys = sheet.getRange(2, 1, last - 1, 2).getValues();
+    for (let i = keys.length - 1; i >= 0; i--) {
+      if (String(keys[i][0]) === String(reviewTime) && String(keys[i][1]) === String(id)) {
+        sheet.deleteRow(i + 2);
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('review unlog failed: ' + err);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function updateCard(id, fsrs, meta) {
   const sheet   = getSheet_();
   const headers = ensureColumns_(sheet, FSRS_FIELDS);
@@ -267,7 +291,11 @@ function updateCard(id, fsrs, meta) {
     const at  = ids.findIndex(r => String(r[0]) === String(id));
     if (at >= 0) {
       writeFields_(sheet, at + 2, headers, fsrs);
-      logReview_(id, fsrs, meta);
+      if (meta && meta.undo) {
+        unlogReview_(id, meta.undone_time);
+      } else {
+        logReview_(id, fsrs, meta);
+      }
       return { ok: true };
     }
   }

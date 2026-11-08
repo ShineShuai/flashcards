@@ -118,6 +118,15 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
       const r = this.getLastRow() + 1;
       arr.forEach((v, i) => this.put(r, i + 1, v));
     }
+    deleteRow(row) {
+      bump('deleteRow');
+      const last = this.getLastRow();
+      for (let r = row; r <= last; r++) {
+        for (let c = 1; c <= this.getLastColumn(); c++) {
+          this.cells.set(this.key(r, c), this.get(r + 1, c));
+        }
+      }
+    }
     setFrozenRows() {}
     setColumnWidth() {}
   }
@@ -361,6 +370,37 @@ if (isMain) {
     const later = fsrsFor({ last_review: '2026-11-08T09:00:00.000Z' });
     const res = env.api.updateCard('a', later, meta);
     assert.equal(res.ok, true);
+  });
+
+  test('undo restores the fields and removes exactly that review from the log', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', due: '2026-11-06T04:00:00.000Z', stability: 5, reps: 3, state: 2,
+                 last_review: '2026-11-05T09:00:00.000Z' });
+    env.put(3, { id: 'b' });
+    const meta = { rating: 3, state_before: 2, hints: 0, keywords: 2, duration_ms: 1 };
+    env.api.updateCard('b', fsrsFor({ last_review: '2026-11-06T08:00:00.000Z' }), meta);
+    const first = fsrsFor({ last_review: '2026-11-06T09:00:00.000Z', reps: 4, stability: 9 });
+    env.api.updateCard('a', first, meta);
+    env.api.updateCard('a', fsrsFor({ last_review: '2026-11-06T09:05:00.000Z' }), meta);
+    const log = env.sheets.get('review_log');
+    assert.equal(log.getLastRow(), 4);
+    const prev = { stability: 5, reps: 3, state: 2, due: '2026-11-06T04:00:00.000Z',
+                   last_review: '2026-11-05T09:00:00.000Z', difficulty: '', weak_keywords: '' };
+    const undo = { undo: true, undone_time: '2026-11-06T09:05:00.000Z' };
+    assert.equal(env.api.updateCard('a', prev, undo).ok, true);
+    // a retried undo finds nothing more to delete
+    assert.equal(env.api.updateCard('a', prev, undo).ok, true);
+    assert.equal(log.getLastRow(), 3);
+    const rows = log.getRange(2, 1, 2, 2).getValues();
+    assert.deepEqual(rows, [
+      ['2026-11-06T08:00:00.000Z', 'b'],
+      ['2026-11-06T09:00:00.000Z', 'a'],
+    ]);
+    const col = (h) => env.headers.indexOf(h) + 1;
+    assert.equal(env.sheet.get(2, col('stability')), 5);
+    assert.equal(env.sheet.get(2, col('last_review')), '2026-11-05T09:00:00.000Z');
+    assert.equal(env.sheet.get(2, col('difficulty')), '');
+    assert.equal(log.getLastRow(), 3, 'undo must not add a log row');
   });
 
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {
