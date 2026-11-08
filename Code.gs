@@ -47,7 +47,7 @@ function getAppUrl() {
 }
 
 function getDocsUrl() {
-  return getAppUrl().replace('/exec', '/exec?page=docs');
+  return getAppUrl() + '?page=docs';   // works for /exec and /dev
 }
 
 function getDocsHtml() {

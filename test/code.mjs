@@ -210,12 +210,13 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
       computeDigest: (alg, s) => [...crypto.createHash(alg).update(s).digest()],
       base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString('base64url'),
     },
-    HtmlService: {}, ScriptApp: {},
+    HtmlService: {},
+    ScriptApp: { getService: () => ({ getUrl: () => ctx.__url }) },
   });
   const api = vm.runInContext(
-    `${code}\n({ getDueCards, getStats, updateCard, setupSheet, HEADERS,` +
+    `${code}\n({ getDueCards, getStats, updateCard, setupSheet, getDocsUrl, HEADERS,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
-  return { api, ss, sheets, stats, Sheet };
+  return { api, ss, sheets, stats, Sheet, ctx };
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
@@ -422,6 +423,15 @@ if (isMain) {
     env.stats.calls = {};
     env.api.bootstrap();
     assert.equal(env.stats.calls.getValues, 1, 'single sheet read');
+  });
+
+  test('docs URL appends ?page=docs to the /exec and /dev URLs', () => {
+    const env = loadCodeGs();
+    for (const base of ['https://script.google.com/macros/s/ID/exec',
+                        'https://script.google.com/macros/s/ID/dev']) {
+      env.ctx.__url = base;
+      assert.equal(env.api.getDocsUrl(), base + '?page=docs');
+    }
   });
 
   test('empty sheet', () => {

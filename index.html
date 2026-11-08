@@ -22,7 +22,10 @@
 </script>
 <title>⚡ Flash</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:ital,wght@0,400;0,700;0,900;1,400&family=Noto+Sans+JP:wght@400;700;900&family=Noto+Sans+KR:wght@400;700;900&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<!-- pinned + integrity-checked; marked 18 ships lib/marked.umd.js (no root marked.min.js) -->
+<script src="https://cdn.jsdelivr.net/npm/marked@18.1.1/lib/marked.umd.js"
+  integrity="sha384-rATToyt6602Jnq8c7w8HZwmyOUgPL7mzxX01FBWoV48ns/EgkakGozpES+PnaYOI"
+  crossorigin="anonymous"></script>
 <style>
 :root {
   --pink:    #FF2D87;
@@ -363,6 +366,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   flex: 1; overflow-y: auto; font-size: .93rem; line-height: 1.75; color: var(--text);
 }
 .back-content-text { white-space: pre-wrap; }
+.back-note { font-size: .75rem; color: var(--text2); margin-bottom: 8px; }
 .back-content img  { max-width:100%; border-radius:12px; margin:8px 0; display:block; }
 .back-content h1,.back-content h2,.back-content h3
   { margin: .7em 0 .3em; color:var(--text); font-weight:900; }
@@ -1248,7 +1252,16 @@ function renderBack(card) {
   const el      = document.getElementById('back-content');
   document.getElementById('back-type-badge').textContent = type;
   if (type === 'html')     { el.innerHTML = content; }
-  else if (type === 'md')  { el.innerHTML = marked.parse(content); }
+  else if (type === 'md') {
+    if (typeof marked !== 'undefined') {
+      el.innerHTML = marked.parse(content);
+    } else {
+      // renderer not loaded (offline, blocked): show the source, keep the card usable
+      const note = 'Markdown renderer not loaded; showing the source.';
+      el.innerHTML = '<div class="back-note">' + note + '</div>' +
+        '<div class="back-content-text">' + escHtml(content) + '</div>';
+    }
+  }
   else { el.innerHTML = '<div class="back-content-text">' + escHtml(content) + '</div>'; }
 }
 function escHtml(s) {

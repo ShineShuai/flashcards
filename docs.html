@@ -564,6 +564,14 @@ td code { font-size: .82rem; }
 
 <div class="callout callout-success">
   <div class="callout-label">After code changes</div>
+  Saving in the editor does not change the deployed app. To publish an edit, keep the same URL:
+  <strong>Deploy → Manage deployments → ✏ Edit → Version: New version → Deploy</strong>.
+  <em>Deploy → New deployment</em> creates a second deployment with a <em>different</em> /exec URL,
+  so use it only for a fresh start. During development, <em>Deploy → Test deployments</em>
+  (the /dev URL) always runs the latest saved code.
+  When you update from an older version, run <code>setupSheet()</code> once more
+  (it formats the empty rows as text and creates the <code>review_log</code> tab; it never touches your cards).
+</div>
   Each time you edit anything in the apps script, a <strong>new deployment</strong> is required:
   New deployment (Deploy → New deployment) changes the URL each time; New version (Deploy → Manage deployments → Edit Version) reuses the same URL. Or use "Test deployments" during development
   — those always reflect the latest saved code.
@@ -628,7 +636,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 <p>Raw HTML injected directly. Full control over layout, images, and styles.</p>
 <pre>
 &lt;h2&gt;桜&lt;/h2&gt;
-&lt;img src="https://drive.google.com/uc?export=view&amp;id=FILE_ID"
+&lt;img src="https://drive.google.com/thumbnail?id=FILE_ID&amp;sz=w1000"
      style="max-width:100%;border-radius:12px"&gt;
 &lt;p&gt;&lt;em&gt;Prunus serrulata&lt;/em&gt; — transient beauty (物の哀れ).&lt;/p&gt;
 &lt;ul&gt;
@@ -666,7 +674,8 @@ Blooms ~2 weeks, late March to early April.</pre>
     <div class="step-num">4</div>
     <div class="step-body">
       <h4>Use in HTML back card</h4>
-      <pre style="margin:6px 0"><code>&lt;img src="https://drive.google.com/uc?export=view&amp;id=<span class="str">FILE_ID</span>"&gt;</code></pre>
+      <pre style="margin:6px 0"><code>&lt;img src="https://drive.google.com/thumbnail?id=<span class="str">FILE_ID</span>&amp;sz=w1000"&gt;</code></pre>
+      <p>If you prefer the full-size file, <code>https://drive.google.com/uc?export=view&amp;id=FILE_ID</code> also works in some browsers, but Google has been restricting it; the thumbnail form is the more reliable one. <code>sz=w1000</code> is the width in pixels.</p>
     </div>
   </li>
 </ol>
@@ -742,7 +751,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p>Cards with 0 or 1 total keywords have no meaningful hint ratio, so no rating is auto-suggested — rate manually.</p>
 
-<p>The suggested button is highlighted with a white outline. You can always override by clicking any other rating button.</p>
+<p>The suggested button is highlighted with a bold outline. You can always override by clicking any other rating button.</p>
 
 <!-- ── Spell Check ─────────────────────────────────────────────────────── -->
 <h2 id="spell">Spell Check</h2>
@@ -770,17 +779,17 @@ Blooms ~2 weeks, late March to early April.</pre>
 <!-- ── Rating ─────────────────────────────────────────────────────────── -->
 <h2 id="rating">Rating Buttons</h2>
 
-<p>After flipping, rate how well you recalled the card. Each button shows the next review interval:</p>
+<p>After flipping, rate how well you recalled the card. Each button shows the next review interval. Example: a Review card with stability 20 days, answered on its due day (previous interval 11 days):</p>
 
 <div class="rating-demo">
-  <div class="rd-btn rd-again">Again<div class="rd-sub">0d*</div></div>
-  <div class="rd-btn rd-recap">Recap<div class="rd-sub">≤ prev</div></div>
-  <div class="rd-btn rd-hard">Hard<div class="rd-sub">1h</div></div>
-  <div class="rd-btn rd-good">Good<div class="rd-sub">3d</div></div>
-  <div class="rd-btn rd-easy">Easy<div class="rd-sub">15d</div></div>
+  <div class="rd-btn rd-again">Again<div class="rd-sub">&lt;1m*</div></div>
+  <div class="rd-btn rd-recap">Recap<div class="rd-sub">11d</div></div>
+  <div class="rd-btn rd-hard">Hard<div class="rd-sub">14d</div></div>
+  <div class="rd-btn rd-good">Good<div class="rd-sub">25d</div></div>
+  <div class="rd-btn rd-easy">Easy<div class="rd-sub">2mo</div></div>
 </div>
 
-<p><em>*Again's interval depends on the card's current state: from Review it drops the card into Relearning and becomes due immediately (interval ≈ 0); from Learning or Relearning it steps to a fixed 10-minute recheck.</em></p>
+<p><em>*Again's interval depends on the card's current state: from Review it drops the card into Relearning and becomes due immediately (interval ≈ 0; in a session it returns after 5 other cards); from Learning or Relearning it steps to a fixed 10-minute recheck. A brand-new card shows 10m / 10m / 1h / 9d for Again / Hard / Good / Easy.</em></p>
 
 <p><strong>Recap</strong> sits between Again and Hard. Difficulty is updated as for Hard, but <em>stability never grows</em> and the interval never exceeds the card's previous interval. If the same keywords needed a hint in consecutive reviews (case-insensitive match), stability, and so the interval, is multiplied by 0.7 for each consecutive repeat. It is for "I recognized this, but not confidently, and Hard's growing interval still feels too aggressive." Recap only behaves this way from Review state; from New/Learning/Relearning (no prior interval to cap against) it falls back to Hard's own scheduling. The Recap preview is recomputed when you flip, so it reflects the hints you used.</p>
 
@@ -818,7 +827,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 <p>Elapsed time is counted in study days (day boundary 04:00 local). If a card is reviewed much later than scheduled, the elapsed days used for retrievability is capped at <strong>2× the scheduled interval</strong>. This prevents extreme overdue cards from producing unrealistically inflated stability after a correct answer.</p>
 
 <h3>Difficulty fallback</h3>
-<p>If a card has no stored difficulty (e.g. corrupted or manually added row), the scheduler defaults to <code>W[4]</code> (the mean difficulty, ~7.19) rather than deriving it from the current rating. This avoids biasing the card's future scheduling based on a single accidental rating.</p>
+<p>If a card has no stored difficulty (e.g. corrupted or manually added row), the scheduler defaults to <code>W[4]</code> (7.19, the initial difficulty of a card first rated Again: a deliberately cautious value) rather than deriving it from the current rating. This avoids biasing the card's future scheduling based on a single accidental rating.</p>
 
 
 <!-- ── States ──────────────────────────────────────────────────────────── -->
@@ -831,7 +840,7 @@ Blooms ~2 weeks, late March to early April.</pre>
       <td><span class="badge b-blue">New</span></td>
       <td>0</td>
       <td>Never reviewed. Blank FSRS fields.</td>
-      <td>Easy→graduates to Review (≥1 day); Good→Learning (1 h); Again/Recap/Hard→enters Learning (10 min / 1 h — Recap behaves as Hard here, since there's no prior interval yet)</td>
+      <td>Easy→graduates to Review (≥1 day); Good→Learning (1 h); Again/Recap/Hard→Learning (10 min; Recap behaves as Hard here, since there's no prior interval yet)</td>
     </tr>
     <tr>
       <td><span class="badge b-amber">Learning</span></td>
@@ -880,12 +889,12 @@ Blooms ~2 weeks, late March to early April.</pre>
     <tr>
       <td>Card doesn't flip back between cards</td>
       <td>CSS <code>.flipped</code> class not removed</td>
-      <td>Ensure <code>loadCard()</code> calls <code>card3d.classList.remove('flipped')</code></td>
+      <td>Ensure <code>loadCard()</code> calls <code>setFlipped(false)</code></td>
     </tr>
     <tr>
       <td>Markdown not rendering</td>
       <td>marked.js CDN failed to load</td>
-      <td>Check browser console; ensure CDN access. Fallback: self-host marked.min.js in a Drive-served script</td>
+      <td>Check the browser console and CDN access. The page pins <code>marked@18.1.1/lib/marked.umd.js</code> with an integrity hash; if it is blocked, md cards show their source text with a notice instead of breaking. To self-host, inline that file in a <code>&lt;script&gt;</code> block in <code>index.html</code></td>
     </tr>
     <tr>
       <td>Home screen shows 0 cards but sheet has cards</td>
@@ -893,17 +902,18 @@ Blooms ~2 weeks, late March to early April.</pre>
       <td>Sheet tab must be named exactly <strong>cards</strong>; every row must have a non-blank <code>id</code></td>
     </tr>
     <tr>
-      <td>Redeploying after code changes has no effect</td>
-      <td>GAS caches the previous deployment</td>
-      <td>Deploy → <strong>New deployment</strong> (not "Manage deployments"). Old <code>/exec</code> URL stays valid but points to old version</td>
+      <td>Edits do not show up in the app</td>
+      <td>The /exec deployment still runs the previously deployed version</td>
+      <td>Deploy → Manage deployments → ✏ Edit → Version: <em>New version</em> → Deploy (same URL), or test with the /dev URL</td>
     </tr>
   </tbody>
 </table>
 
 <div class="callout callout-success">
   <div class="callout-label">After code changes</div>
-  Each time you edit <code>Code.gs</code> or <code>index.html</code>, a <strong>new deployment</strong>
-  is required. Or use "Test deployments" during development — those always reflect the latest saved code.
+  Each time you edit <code>Code.gs</code> or <code>index.html</code>, publish a <strong>new version</strong>
+  of the existing deployment (Deploy → Manage deployments → ✏ Edit → New version); the /exec URL stays the same.
+  Test deployments (/dev) always run the latest saved code.
 </div>
 
 </main>
