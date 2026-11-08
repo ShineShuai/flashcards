@@ -366,6 +366,14 @@ body::before {
   border: 1px solid var(--border); transition: color .15s, background .15s;
 }
 .docs-link:hover { color: var(--purple); background: rgba(124,58,255,.08); }
+/* ── Save status pill (pending / failed saves) ── */
+.save-status {
+  position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+  padding: 6px 14px; border-radius: 100px; z-index: 300; display: none;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+  font-size: .75rem; font-weight: 600; color: var(--text2);
+}
+.save-status.error { color: var(--pink); border-color: var(--pink); }
 #docs-modal { position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column; }
 #docs-content { flex: 1; display: flex; overflow: hidden; }
 @media (max-width: 420px) {
@@ -523,6 +531,8 @@ body::before {
     onmouseout="this.style.color='var(--pink)'; this.style.transform='scale(1)'">✕</button>
   <div id="docs-content"></div>
 </div>
+
+<div class="save-status" id="save-status" role="status" aria-live="polite"></div>
 
 <script>
 let _docsBlobUrl = null;
@@ -779,6 +789,11 @@ const REQUEUE_GAP = 5;
 const FLIP_MS = 550;    // keep in sync with the .card-3d transition
 let pendingBack = null;
 let backTimer   = null;
+let cardShownAt = 0;    // Date.now() when the current card was shown (review duration)
+let homeCards   = null; // due cards prefetched by bootstrap(); consumed by startSession
+let homeAt      = 0;
+const HOME_CACHE_MS = 5 * 60 * 1000;
+const SAVE_WAIT_MS  = 8000;   // max wait for pending saves before reading from the server
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Theme
@@ -812,6 +827,99 @@ function initTheme() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Save queue
+// Ratings are written strictly in order, one at a time, retried with backoff,
+// and kept in localStorage until the server confirms them.
+// ═══════════════════════════════════════════════════════════════════════════
+const SAVE_KEY = 'fc-pending-saves';
+const SAVE_RETRY_MAX_MS = 30000;
+let saveRetryBaseMs = 2000;
+let saveQueue    = [];
+let saveBusy     = false;
+let saveFailures = 0;
+let saveTimer    = null;
+let idleWaiters  = [];
+
+function loadPendingSaves() {
+  try {
+    const parsed = JSON.parse(storageGet(SAVE_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+function persistSaves() {
+  storageSet(SAVE_KEY, JSON.stringify(saveQueue));
+}
+function renderSaveStatus() {
+  const el = document.getElementById('save-status');
+  const n  = saveQueue.length;
+  if (!n) {
+    el.style.display = 'none';
+    return;
+  }
+  el.className = 'save-status' + (saveFailures ? ' error' : '');
+  el.textContent = saveFailures ? `⚠ ${n} unsaved, retrying…` : `Saving ${n}…`;
+  el.style.display = 'block';
+}
+function enqueueSave(id, fsrs, meta) {
+  saveQueue.push({ id, fsrs, meta });
+  persistSaves();
+  drainSaves();
+}
+function drainSaves() {
+  if (saveBusy) {
+    return;
+  }
+  clearTimeout(saveTimer);
+  renderSaveStatus();
+  if (!saveQueue.length) {
+    const waiters = idleWaiters;
+    idleWaiters = [];
+    waiters.forEach(fn => fn());
+    return;
+  }
+  saveBusy = true;
+  const job = saveQueue[0];
+  google.script.run
+    .withSuccessHandler(res => {
+      saveBusy = false;
+      if (res && res.ok === false) {
+        console.error('save rejected:', res.error);   // e.g. card deleted: do not retry forever
+      }
+      saveQueue.shift();
+      saveFailures = 0;
+      persistSaves();
+      drainSaves();
+    })
+    .withFailureHandler(err => {
+      saveBusy = false;
+      saveFailures++;
+      console.error('save failed:', err);
+      renderSaveStatus();
+      const wait = Math.min(saveRetryBaseMs * Math.pow(2, saveFailures - 1), SAVE_RETRY_MAX_MS);
+      saveTimer = setTimeout(drainSaves, wait);
+    })
+    .updateCard(job.id, job.fsrs, job.meta);
+}
+// Runs fn once the queue is empty, or after timeoutMs at the latest.
+function whenSaved(fn, timeoutMs) {
+  if (!saveQueue.length) {
+    fn();
+    return;
+  }
+  let fired = false;
+  const run = () => {
+    if (!fired) {
+      fired = true;
+      fn();
+    }
+  };
+  idleWaiters.push(run);
+  setTimeout(run, timeoutMs);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Screen Management
 // ═══════════════════════════════════════════════════════════════════════════
 const SCREENS = ['s-loading','s-home','s-session','s-complete'];
@@ -824,10 +932,18 @@ function show(id) {
 // ═══════════════════════════════════════════════════════════════════════════
 function showHome() {
   show('s-loading');
+  homeCards = null;
   document.getElementById('home-date').textContent =
     new Date().toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  // Read only after pending saves landed, or the stats would still count them as due
+  whenSaved(fetchHome, SAVE_WAIT_MS);
+}
+function fetchHome() {
   google.script.run
-    .withSuccessHandler(stats => {
+    .withSuccessHandler(res => {
+      const stats = res.stats;
+      homeCards = res.cards;
+      homeAt    = Date.now();
       document.getElementById('stat-due').textContent   = stats.due;
       document.getElementById('stat-new').textContent   = stats.new;
       document.getElementById('stat-total').textContent = stats.total;
@@ -837,31 +953,42 @@ function showHome() {
       show('s-home');
     })
     .withFailureHandler(err => { alert('Error: ' + err.message); show('s-home'); })
-    .getStats();
+    .bootstrap();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Session
 // ═══════════════════════════════════════════════════════════════════════════
 function startSession() {
+  // Home already fetched the due cards in the same read as the stats
+  if (homeCards && Date.now() - homeAt < HOME_CACHE_MS) {
+    const cards = homeCards;
+    homeCards = null;
+    beginSession(cards);
+    return;
+  }
   show('s-loading');
-  google.script.run
-    .withSuccessHandler(cards => {
-      deck  = cards || [];
-      idx   = 0;
-      done  = 0;
-      sessionTotal = deck.length;
-      sessionStats = { total: 0, again: 0, good: 0 };
-      if (!deck.length) { showHome(); return; }
-      show('s-session');
-      updateProgress();
-      loadCard(0);
-    })
-    .withFailureHandler(err => {
-      alert('Error loading cards: ' + err.message);
-      show('s-home');
-    })
-    .getDueCards();
+  whenSaved(() => {
+    google.script.run
+      .withSuccessHandler(beginSession)
+      .withFailureHandler(err => {
+        alert('Error loading cards: ' + err.message);
+        show('s-home');
+      })
+      .getDueCards();
+  }, SAVE_WAIT_MS);
+}
+
+function beginSession(cards) {
+  deck  = cards || [];
+  idx   = 0;
+  done  = 0;
+  sessionTotal = deck.length;
+  sessionStats = { total: 0, again: 0, good: 0 };
+  if (!deck.length) { showHome(); return; }
+  show('s-session');
+  updateProgress();
+  loadCard(0);
 }
 
 function loadCard(i) {
@@ -897,6 +1024,7 @@ function loadCard(i) {
   }
   renderIntervalPreviews(card);
   clearSuggestion();
+  cardShownAt = Date.now();
 }
 
 function isFlipped() {
@@ -1119,15 +1247,20 @@ function rate(rating) {
   const missed     = shuffledKw.slice(0, shownCount);
   const missStreak = streakFor(card, missed);
 
+  const stateBefore = Number(card.state) || 0;
   const fsrs = scheduleCard(card, rating, missStreak);
   fsrs.weak_keywords = missed.join(';');
   fsrs.miss_streak   = missStreak;
 
   Object.assign(card, fsrs);
   delete card._skipped;
-  google.script.run
-    .withFailureHandler(e => { console.error('updateCard failed:', e); alert('Failed to save: ' + e.message); })
-    .updateCard(card.id, fsrs);
+  enqueueSave(card.id, fsrs, {
+    rating:       rating,
+    state_before: stateBefore,
+    hints:        shownCount,
+    keywords:     shuffledKw.length,
+    duration_ms:  Math.min(Date.now() - cardShownAt, 1800000)
+  });
   sessionStats.total++;
   if (rating === 1) {
     sessionStats.again++;
@@ -1301,6 +1434,14 @@ function updateProgress() {
 // Init
 // ═══════════════════════════════════════════════════════════════════════════
 initTheme();
+saveQueue = loadPendingSaves();   // ratings not confirmed before the last close
+window.addEventListener('beforeunload', e => {
+  if (saveQueue.length) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+drainSaves();
 showHome();
 </script>
 </body>

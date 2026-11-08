@@ -387,7 +387,7 @@ td code { font-size: .82rem; }
     <div class="arch-box-title">Google Sheet</div>
     <div class="arch-box-items">
       Tab: <strong>cards</strong><br>
-      14 columns<br>
+      16 columns<br>
       User adds cards<br>
       FSRS auto-fills
     </div>
@@ -397,6 +397,7 @@ td code { font-size: .82rem; }
     <div class="arch-box-title">Code.gs</div>
     <div class="arch-box-items">
       GAS backend<br>
+      bootstrap()<br>
       getDueCards()<br>
       updateCard()<br>
       getStats()
@@ -516,14 +517,14 @@ td code { font-size: .82rem; }
     <div class="step-num">2</div>
     <div class="step-body">
       <h4>Verify the sheet</h4>
-      <p>Switch to your Spreadsheet. A tab named <strong>cards</strong> should appear with 14 purple header columns.</p>
+      <p>Switch to your Spreadsheet. A tab named <strong>cards</strong> should appear with 16 purple header columns, plus a <strong>review_log</strong> tab.</p>
     </div>
   </li>
 </ol>
 
 <div class="callout callout-warn">
   <div class="callout-label">Important</div>
-  If you skip <code>setupSheet()</code> and create the sheet manually, make sure all 14 column headers exist.
+  If you skip <code>setupSheet()</code> and create the sheet manually, make sure all 16 column headers exist.
   Missing FSRS headers cause silent write failures. The app will auto-add any missing ones on first review,
   but it's cleaner to run setup first.
 </div>
@@ -571,7 +572,7 @@ td code { font-size: .82rem; }
 <!-- ── Schema ──────────────────────────────────────────────────────────── -->
 <h2 id="schema">Sheet Schema</h2>
 
-<p>The <strong>cards</strong> tab has 14 columns. You fill the first 5 for each card; the rest are managed automatically.</p>
+<p>The <strong>cards</strong> tab has 16 columns. You fill the first 5 for each card; the rest are managed automatically.</p>
 
 <table>
   <thead>
@@ -592,8 +593,15 @@ td code { font-size: .82rem; }
     <tr><td>12</td><td><code>lapses</code></td>      <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Times rated Again in Review state</td></tr>
     <tr><td>13</td><td><code>state</code></td>       <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>0=New 1=Learning 2=Review 3=Relearning</td></tr>
     <tr><td>14</td><td><code>last_review</code></td> <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>ISO timestamp of last review</td></tr>
+    <tr><td>15</td><td><code>weak_keywords</code></td><td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Keywords that needed a hint in the last review (<code>;</code>-separated)</td></tr>
+    <tr><td>16</td><td><code>miss_streak</code></td> <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Consecutive reviews that needed a hint for the same keywords (used by Recap)</td></tr>
   </tbody>
 </table>
+
+<p><strong>Plain text.</strong> The text columns (<code>id</code>, <code>title</code>, <code>keywords</code>, <code>back_content</code>, <code>back_type</code>, <code>due</code>, <code>last_review</code>, <code>weak_keywords</code>) use the plain-text format, so values such as <code>3/4</code>, <code>1.5</code> or <code>=x</code> are kept as typed and ISO timestamps are never turned into dates. <code>setupSheet()</code> applies this to the empty rows below your data; it is safe to re-run. Cells that already hold a converted date or number are not changed, but every review rewrites <code>due</code>, <code>last_review</code> and <code>weak_keywords</code> of its card as text.</p>
+
+<h3>Review log</h3>
+<p>Every rating appends one row to the <strong>review_log</strong> tab (created on the first review): <code>review_time</code>, <code>card_id</code>, <code>rating</code> (1, 1.5 = Recap, 2, 3, 4), <code>state_before</code>, <code>elapsed_days</code>, <code>scheduled_days</code>, <code>stability</code>, <code>difficulty</code>, <code>hints</code> (keywords revealed), <code>keywords</code> (total) and <code>duration_ms</code>. This is the input for an FSRS optimizer; map Recap to Hard (2) first. A retried request never logs the same review twice, and a logging failure never blocks the card update.</p>
 
 <!-- ── Back types ──────────────────────────────────────────────────────── -->
 <h2 id="back-types">Back Card Types</h2>
@@ -671,6 +679,8 @@ Blooms ~2 weeks, late March to early April.</pre>
 <p>Each session goes through all cards due today in order (most overdue first, new cards last). A progress bar tracks completion. When all cards are rated, a summary screen shows totals.</p>
 
 <p><strong>Re-queue within the session.</strong> A card rated into a sub-day step comes back in the same session: the 10-minute step (Again, or a lapse) returns after 5 other cards; the 1-hour step (Hard) returns at the end of the session. A re-queued card counts as done in the progress bar only once it leaves the learning steps.</p>
+
+<p><strong>Saving.</strong> Ratings are written to the sheet in the background, one at a time and in order. A small indicator shows pending saves; if the connection fails they are retried with growing delays (2 s up to 30 s) and kept in the browser until the sheet confirms them, so closing the tab does not lose them (the browser warns while saves are pending). Home waits for pending saves before it reads the sheet. Home loads the stats and the due cards in one read, and Start reuses them for up to five minutes.</p>
 
 <p><strong>Study day.</strong> A new day starts at 04:00 local time. Intervals of one day or more are due at 04:00 of the target day, so a card reviewed at 23:00 with a 1-day interval is due at 04:00 the next morning. Sub-day steps stay exact timestamps.</p>
 
