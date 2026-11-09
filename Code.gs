@@ -205,10 +205,11 @@ function bootstrap() {
 }
 
 // ─── API: updateCard ───────────────────────────────────────────────────────
-// Writes FSRS fields back to the row matching id: one id-column read and one
-// setValues per run of adjacent columns. Columns are located by header name, so
-// extra columns and any column order are fine. meta (optional) is logged to the
-// review_log sheet; meta.undo removes that review's log row instead.
+// Writes FSRS fields back to the row matching id: one id-column read, one
+// last_review read and one setValues per run of adjacent columns. Columns are
+// located by header name, so extra columns and any column order are fine. meta
+// (optional) is logged to the review_log sheet; meta.undo removes that review's
+// log row instead. A stale save (see isStale_) writes nothing: { ok, stale }.
 
 function writeFields_(sheet, row, headers, fsrs) {
   const cells = FSRS_FIELDS
@@ -281,6 +282,26 @@ function unlogReview_(id, reviewTime) {
   }
 }
 
+// A save is stale when the sheet already holds a later review of the same card
+// (a delayed retry from another tab or device). Only a known timestamp counts:
+// blank cells, legacy Date cells and unparsable values are never stale. An undo
+// writes the previous (older) state, so it is applied only while the review it
+// undoes is still the latest. Not covered: two saves running at the same moment.
+function reviewMs_(v) {
+  return typeof v === 'string' && v ? Date.parse(v) : NaN;
+}
+
+function isStale_(stored, fsrs, meta) {
+  const have = reviewMs_(stored);
+  if (isNaN(have)) return false;
+  if (meta && meta.undo) {
+    const undone = reviewMs_(meta.undone_time);
+    return !isNaN(undone) && have !== undone;
+  }
+  const incoming = reviewMs_(fsrs.last_review);
+  return !isNaN(incoming) && have > incoming;
+}
+
 function updateCard(id, fsrs, meta) {
   const sheet   = getSheet_();
   const headers = ensureColumns_(sheet, FSRS_FIELDS);
@@ -290,6 +311,11 @@ function updateCard(id, fsrs, meta) {
     const ids = sheet.getRange(2, idCol, lastRow - 1, 1).getValues();
     const at  = ids.findIndex(r => String(r[0]) === String(id));
     if (at >= 0) {
+      const lrCol  = headers.indexOf('last_review') + 1;
+      const stored = sheet.getRange(at + 2, lrCol, 1, 1).getValues()[0][0];
+      if (isStale_(stored, fsrs, meta)) {
+        return { ok: true, stale: true };
+      }
       writeFields_(sheet, at + 2, headers, fsrs);
       if (meta && meta.undo) {
         unlogReview_(id, meta.undone_time);

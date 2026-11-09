@@ -404,6 +404,64 @@ if (isMain) {
     assert.equal(log.getLastRow(), 3, 'undo must not add a log row');
   });
 
+  test('stale save: a later stored review wins; nothing is written or logged', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', reps: 5, stability: 20, last_review: '2026-11-07T09:00:00.000Z' });
+    const col = (h) => env.headers.indexOf(h) + 1;
+    const meta = { rating: 3, state_before: 2, hints: 0, keywords: 1, duration_ms: 1 };
+    const older = fsrsFor({ last_review: '2026-11-06T09:00:00.000Z' });
+    assert.deepEqual({ ...env.api.updateCard('a', older, meta) }, { ok: true, stale: true });
+    assert.equal(env.sheet.get(2, col('reps')), 5);
+    assert.equal(env.sheet.get(2, col('stability')), 20);
+    assert.equal(env.sheet.get(2, col('last_review')), '2026-11-07T09:00:00.000Z');
+    assert.equal(env.sheets.get('review_log'), undefined, 'a skipped save must not log');
+    // equal timestamp (a retry of the stored review) and a later review are applied
+    const retry = fsrsFor({ last_review: '2026-11-07T09:00:00.000Z' });
+    assert.equal(env.api.updateCard('a', retry).stale, undefined);
+    const later = fsrsFor({ last_review: '2026-11-08T09:00:00.000Z', reps: 6 });
+    assert.equal(env.api.updateCard('a', later, meta).stale, undefined);
+    assert.equal(env.sheet.get(2, col('reps')), 6);
+    assert.equal(env.sheets.get('review_log').getLastRow(), 2);
+  });
+
+  test('stale guard needs a known timestamp (blank, Date, junk, no last_review)', () => {
+    const env = fixture();
+    const col = (h) => env.headers.indexOf(h) + 1;
+    env.put(2, { id: 'blank' });
+    env.put(3, { id: 'date', last_review: new Date('2026-12-01T00:00:00Z') });
+    env.put(4, { id: 'junk', last_review: 'n/a' });
+    env.put(5, { id: 'iso', last_review: '2026-12-01T00:00:00.000Z' });
+    for (const id of ['blank', 'date', 'junk']) {
+      assert.equal(env.api.updateCard(id, fsrsFor()).stale, undefined, id);
+    }
+    assert.equal(env.sheet.get(3, col('last_review')), '2026-11-06T09:00:00.000Z');
+    const noReview = fsrsFor();
+    delete noReview.last_review;                       // partial write, not a review
+    assert.equal(env.api.updateCard('iso', noReview).stale, undefined);
+    assert.equal(env.sheet.get(5, col('reps')), 4);
+  });
+
+  test('undo applies only while the undone review is still the latest', () => {
+    const env = fixture();
+    const col = (h) => env.headers.indexOf(h) + 1;
+    const prev = { stability: 5, reps: 3, state: 2, last_review: '2026-11-05T09:00:00.000Z' };
+    const meta = { rating: 3, state_before: 2, hints: 0, keywords: 1, duration_ms: 1 };
+    env.put(2, { id: 'a', ...prev });
+    env.api.updateCard('a', fsrsFor({ last_review: '2026-11-06T09:00:00.000Z' }), meta);
+    // another device reviews the card later; the late undo of the first review is skipped
+    env.api.updateCard('a', fsrsFor({ last_review: '2026-11-06T10:00:00.000Z', reps: 5 }), meta);
+    const late = { undo: true, undone_time: '2026-11-06T09:00:00.000Z' };
+    assert.deepEqual({ ...env.api.updateCard('a', prev, late) }, { ok: true, stale: true });
+    assert.equal(env.sheet.get(2, col('reps')), 5);
+    assert.equal(env.sheets.get('review_log').getLastRow(), 3, 'log row kept');
+    // undo of the latest review is applied
+    const now = { undo: true, undone_time: '2026-11-06T10:00:00.000Z' };
+    const res = env.api.updateCard('a', fsrsFor({ ...prev, reps: 4 }), now);
+    assert.deepEqual({ ...res }, { ok: true });
+    assert.equal(env.sheet.get(2, col('reps')), 4);
+    assert.equal(env.sheets.get('review_log').getLastRow(), 2);
+  });
+
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {
     const env = fixture();
     const now = Date.now();

@@ -689,7 +689,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p><strong>Re-queue within the session.</strong> A card rated into a sub-day step comes back in the same session: the 10-minute step (Again, or a lapse) returns after 5 other cards; the 1-hour step (Hard) returns at the end of the session. A re-queued card counts as done in the progress bar only once it leaves the learning steps.</p>
 
-<p><strong>Saving.</strong> Ratings are written to the sheet in the background, one at a time and in order. A small indicator shows pending saves; if the connection fails they are retried with growing delays (2 s up to 30 s) and kept in the browser until the sheet confirms them, so closing the tab does not lose them (the browser warns while saves are pending). Home waits for pending saves before it reads the sheet. Home loads the stats and the due cards in one read, and Start reuses them for up to five minutes.</p>
+<p><strong>Saving.</strong> Ratings are written to the sheet in the background, one at a time and in order. A small indicator shows pending saves; if the connection fails they are retried with growing delays (2 s up to 30 s) and kept in the browser until the sheet confirms them, so closing the tab does not lose them (the browser warns while saves are pending). A retry that arrives after a newer review of the same card has reached the sheet (for example from a second tab or device) is skipped, so it cannot overwrite it. Home waits for pending saves before it reads the sheet. Home loads the stats and the due cards in one read, and Start reuses them for up to five minutes.</p>
 
 <h3>Keyboard shortcuts</h3>
 <table>
