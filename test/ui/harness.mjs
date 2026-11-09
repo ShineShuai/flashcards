@@ -29,11 +29,11 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 });
 
 // options: cards, storage (initial localStorage), dark (system theme), blockStorage,
-//          docsFail, failDue (getDueCards fails),
+//          docsFail, failDue (getDueCards fails), config (sent with bootstrap),
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
-          docsFail = false, failDue = false, server = {} } = options;
+          docsFail = false, failDue = false, config, server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], ...server };
   const dom = new JSDOM(html, {
@@ -71,7 +71,7 @@ export function boot(options = {}) {
         if (fn === 'bootstrap') {
           ev.push('bootstrap');
           const n = cards.length;
-          ok({ stats: { total: n, due: n, new: n, review: 0 }, cards: clone() });
+          ok({ stats: { total: n, due: n, new: n, review: 0 }, cards: clone(), config });
         } else if (fn === 'getDueCards') {
           ev.push('getDueCards');
           if (failDue) {

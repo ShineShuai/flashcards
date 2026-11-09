@@ -570,7 +570,7 @@ td code { font-size: .82rem; }
   so use it only for a fresh start. During development, <em>Deploy → Test deployments</em>
   (the /dev URL) always runs the latest saved code.
   When you update from an older version, run <code>setupSheet()</code> once more
-  (it formats the empty rows as text and creates the <code>review_log</code> tab; it never touches your cards).
+  (it formats the empty rows as text and creates the <code>review_log</code> and <code>settings</code> tabs; it never touches your cards).
 </div>
   Each time you edit anything in the apps script, a <strong>new deployment</strong> is required:
   New deployment (Deploy → New deployment) changes the URL each time; New version (Deploy → Manage deployments → Edit Version) reuses the same URL. Or use "Test deployments" during development
@@ -821,7 +821,8 @@ Blooms ~2 weeks, late March to early April.</pre>
 <p>The W parameters (19 values) are the unmodified defaults of py-fsrs 5.1.0; difficulty update (linear damping, reversion to D0(Easy)) and post-lapse stability cap follow the same reference. To personalize them, run <a href="https://github.com/open-spaced-repetition/fsrs-optimizer" target="_blank">fsrs-optimizer</a> on your review log and replace the <code>W</code> array at the top of the <code>&lt;script&gt;</code> block in <code>index.html</code>.</p>
 
 <h3>Desired retention and maximum interval</h3>
-<p>The interval is the number of days until predicted recall falls to <code>DESIRED_RETENTION</code> (0.94). Raise it for shorter intervals and more reviews; lower it for the opposite. <code>MAX_INTERVAL</code> (365 days) caps the scheduled interval only; stability keeps growing. Both are constants at the top of the FSRS block in <code>index.html</code>. The curve constant (R = 90% at t = S) is independent of <code>DESIRED_RETENTION</code>.</p>
+<p>The interval is the number of days until predicted recall falls to the desired retention (default 0.94). Raise it for shorter intervals and more reviews; lower it for the opposite. The maximum interval (default 365 days) caps the scheduled interval only; stability keeps growing. The curve constant (R = 90% at t = S) is independent of the desired retention.</p>
+<p><strong>Settings.</strong> The defaults are in <code>Config.gs</code>. To change them for your own sheet, add rows to the <strong>settings</strong> tab (created by <code>setupSheet()</code>): column <code>key</code> and column <code>value</code> as JSON text. <code>retention</code> takes 0.80 to 0.97, <code>max_interval</code> a whole number of days from 30 to 3650, and <code>w</code> an array of 19 weights, for example one fitted by an optimizer. A blank value means the default. A row with a value that is not valid, out of range or of the wrong length is ignored. Changes apply the next time Home loads, and only to future reviews; stored intervals stay. Every change of <code>w</code> made through the app is also appended to the <strong>weights_history</strong> tab.</p>
 
 <h3>Overdue cap</h3>
 <p>Elapsed time is counted in study days (day boundary 04:00 local). If a card is reviewed much later than scheduled, the elapsed days used for retrievability is capped at <strong>2× the scheduled interval</strong>. This prevents extreme overdue cards from producing unrealistically inflated stability after a correct answer.</p>

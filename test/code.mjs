@@ -12,7 +12,9 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
-  const code = fs.readFileSync(file, 'utf8');
+  // Apps Script shares one global scope across files: Config.gs first, then Code.gs
+  const code = [path.join(path.dirname(file), 'Config.gs'), file]
+    .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
   const stats = { calls: {}, locks: 0, failAppend: false };
   const bump = (name) => {
     stats.calls[name] = (stats.calls[name] || 0) + 1;
@@ -214,7 +216,8 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ScriptApp: { getService: () => ({ getUrl: () => ctx.__url }) },
   });
   const api = vm.runInContext(
-    `${code}\n({ getDueCards, getStats, updateCard, setupSheet, getDocsUrl, HEADERS,` +
+    `${code}\n({ getDueCards, getStats, updateCard, setupSheet, getDocsUrl, HEADERS, DEFAULTS,` +
+    ` saveSettings,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
   return { api, ss, sheets, stats, Sheet, ctx };
 }
@@ -462,6 +465,118 @@ if (isMain) {
     assert.equal(env.sheets.get('review_log').getLastRow(), 2);
   });
 
+  // ── config: DEFAULTS + settings tab ──────────────────────────────────────
+  const plain = (x) => JSON.parse(JSON.stringify(x));
+  const withSettings = (rows) => {
+    const env = fixture();
+    const st = env.ss.insertSheet('settings');
+    ['key', 'value', 'updated', 'source'].forEach((h, i) => st.raw(1, i + 1, h));
+    rows.forEach((r, i) => r.forEach((v, j) => st.raw(i + 2, j + 1, v)));
+    return env;
+  };
+  const w21 = (x) => plain(loadCodeGs().api.DEFAULTS.w).map((v) => (x === undefined ? v : x));
+
+  test('no settings tab: bootstrap sends the defaults and creates nothing', () => {
+    const env = fixture();
+    const { config } = plain(env.api.bootstrap());
+    assert.deepEqual(config, { ...plain(env.api.DEFAULTS), overridden: [], rejected: [] });
+    assert.equal(env.sheets.get('settings'), undefined);
+  });
+
+  test('settings rows override key by key (JSON text or number, blank = default)', () => {
+    const w = plain(loadCodeGs().api.DEFAULTS.w);
+    w[0] = 0.5;
+    const env = withSettings([
+      ['retention', '0.9', '', ''],
+      ['max_interval', 720, '', ''],               // a cell Sheets turned into a number
+      ['w', JSON.stringify(w), '', ''],
+      ['retention', '0.92', '', ''],               // last row of a key wins
+    ]);
+    const { config } = plain(env.api.bootstrap());
+    assert.equal(config.retention, 0.92);
+    assert.equal(config.max_interval, 720);
+    assert.deepEqual(config.w, w);
+    assert.deepEqual(config.overridden.sort(), ['max_interval', 'retention', 'w']);
+    assert.deepEqual(config.rejected, []);
+    const blank = withSettings([['retention', '', '', ''], ['w', '  ', '', '']]);
+    const b = plain(blank.api.bootstrap()).config;
+    assert.deepEqual(b.overridden, []);
+    assert.equal(b.retention, 0.94);
+  });
+
+  test('invalid overrides are ignored and reported, the rest still applies', () => {
+    const w = plain(loadCodeGs().api.DEFAULTS.w);
+    const env = withSettings([
+      ['retention', '0.5', '', ''],                // below 0.80
+      ['max_interval', '12.5', '', ''],            // not whole
+      ['w', JSON.stringify(w.slice(1)), '', ''],   // 18 values
+      ['typo_key', '1', '', ''],
+      ['x', '{oops', '', ''],
+    ]);
+    const { config } = plain(env.api.bootstrap());
+    const keys = config.rejected.map((r) => r.key);
+    assert.deepEqual(keys, ['retention', 'max_interval', 'w', 'typo_key', 'x']);
+    assert.equal(config.rejected[2].reason, 'expected 19 values');
+    assert.equal(config.rejected[4].reason, 'not valid JSON');
+    assert.deepEqual(config.overridden, []);
+    assert.equal(config.retention, 0.94);
+    const hi = plain(w);
+    hi[7] = 0.9;                                   // above the optimizer's clip 0.75
+    const out = withSettings([['w', JSON.stringify(hi), '', ''], ['retention', '0.9', '', '']]);
+    const c = plain(out.api.bootstrap()).config;
+    assert.match(c.rejected[0].reason, /^w\[7\] outside/);
+    assert.equal(c.retention, 0.9);
+  });
+
+  test('saveSettings: validates first, upserts, clears, records w in weights_history', () => {
+    const env = fixture();
+    const bad = env.api.saveSettings({ retention: 0.99, max_interval: 90 });
+    const errors = { retention: 'expected a number in 0.8–0.97' };
+    assert.deepEqual(plain(bad), { ok: false, errors });
+    assert.equal(env.sheets.get('settings'), undefined, 'nothing written on an error');
+    assert.equal(env.api.saveSettings({}).ok, false);
+    assert.equal(env.api.saveSettings({ nope: null }).errors.nope, 'unknown key');
+
+    const ok = env.api.saveSettings({ retention: 0.9, max_interval: 90 }, { source: 'dialog' });
+    assert.equal(ok.ok, true);
+    assert.equal(ok.config.retention, 0.9);
+    const st = env.sheets.get('settings');
+    assert.deepEqual(st.getRange(2, 1, 2, 2).getValues(),
+      [['retention', '0.9'], ['max_interval', '90']]);
+    assert.equal(st.get(2, 4), 'dialog');
+    assert.equal(env.sheets.get('weights_history'), undefined, 'no w, no history');
+
+    env.api.saveSettings({ retention: 0.92 });     // upsert, no second row
+    assert.equal(st.getLastRow(), 3);
+    assert.equal(st.get(2, 2), '0.92');
+    const w = plain(env.api.DEFAULTS.w);
+    w[2] = 3.5;
+    const meta = { source: 'optimizer', n_reviews: 1200, loss_before: 0.41,
+                   loss_after: 0.37, note: 'run 1' };
+    assert.deepEqual(plain(env.api.saveSettings({ w }, meta).config.w), w);
+    const hist = env.sheets.get('weights_history');
+    assert.deepEqual(hist.getRange(2, 2, 1, 6).getValues()[0],
+      [1200, JSON.stringify(w), 0.41, 0.37, 'optimizer', 'run 1']);
+    assert.equal(typeof hist.get(2, 1), 'string', 'time stays text');
+
+    env.api.saveSettings({ w: null, retention: null });   // back to defaults
+    const c = plain(env.api.bootstrap()).config;
+    assert.deepEqual(c.overridden, ['max_interval']);     // still 90
+    assert.equal(c.retention, 0.94);
+    assert.equal(hist.getLastRow(), 3);
+    assert.equal(hist.get(3, 7), 'back to defaults');
+    assert.equal(hist.get(3, 3), '');
+  });
+
+  test('setupSheet creates the settings tab with its headers', () => {
+    const env = loadCodeGs();
+    env.api.setupSheet();
+    const st = env.sheets.get('settings');
+    assert.deepEqual(st.getRange(1, 1, 1, 4).getValues()[0],
+      ['key', 'value', 'updated', 'source']);
+    assert.equal(st.fmt.get('2,2'), '@');
+  });
+
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {
     const env = fixture();
     const now = Date.now();
@@ -496,7 +611,9 @@ if (isMain) {
     const env = fixture();
     const b = env.api.bootstrap();
     const zero = { total: 0, due: 0, new: 0, review: 0 };
-    assert.deepEqual(JSON.parse(JSON.stringify(b)), { stats: zero, cards: [] });
+    const { config, ...rest } = JSON.parse(JSON.stringify(b));
+    assert.deepEqual(rest, { stats: zero, cards: [] });
+    assert.equal(config.retention, 0.94);
   });
 
   console.log(failed ? `\n${failed} failed` : '\nall passed');

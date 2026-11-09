@@ -692,7 +692,7 @@ window.addEventListener('beforeunload', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // @fsrs-begin
 // Default parameters (19 values, open-spaced-repetition/py-fsrs v5)
-const W = [
+let W = [
   0.40255, 1.18385, 3.17300, 15.69105,   // w[0..3]  S₀ per grade
   7.19490, 0.53450,  1.46040,  0.00460,   // w[4..7]  D₀, difficulty
   1.54575, 0.11920,  1.01925,  1.93950,   // w[8..11] recall stability
@@ -703,8 +703,8 @@ const W = [
 const LEARNING_STEPS = [10 / 1440, 60 / 1440]; // Again→10 min, Hard→1 h
 // Interval = days until predicted recall falls to this level. Higher means
 // shorter intervals and more reviews. Independent of the curve constants.
-const DESIRED_RETENTION = 0.94;
-const MAX_INTERVAL = 365;   // days; caps scheduled_days only, not stability
+let DESIRED_RETENTION = 0.94;
+let MAX_INTERVAL = 365;   // days; caps scheduled_days only, not stability
 const ROLLOVER_HOUR = 4;    // a new study day starts at 04:00 local time
 const DECAY  = -0.5;
 const FACTOR = Math.pow(0.9, 1 / DECAY) - 1;   // curve constant: R(t = S) = 0.9
@@ -892,6 +892,26 @@ function shownToRating(shown, total) {
 }
 // @fsrs-end
 
+// The server sends DEFAULTS merged with the user's overrides (Config.gs, settings
+// tab). The values above are the fallback; a missing or malformed value keeps them.
+function applyConfig(cfg) {
+  if (!cfg) {
+    return;
+  }
+  if (Array.isArray(cfg.w) && cfg.w.length === W.length && cfg.w.every(Number.isFinite)) {
+    W = cfg.w.slice();
+  }
+  if (Number.isFinite(cfg.retention)) {
+    DESIRED_RETENTION = cfg.retention;
+  }
+  if (Number.isFinite(cfg.max_interval)) {
+    MAX_INTERVAL = cfg.max_interval;
+  }
+  if (cfg.rejected && cfg.rejected.length) {
+    console.warn('settings ignored:', JSON.stringify(cfg.rejected));
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // App State
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1073,6 +1093,7 @@ function showHome() {
 function fetchHome() {
   google.script.run
     .withSuccessHandler(res => {
+      applyConfig(res.config);
       const stats = res.stats;
       homeCards = res.cards;
       homeAt    = Date.now();

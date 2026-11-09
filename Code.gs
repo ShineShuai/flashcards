@@ -2,6 +2,8 @@
 
 const SHEET_NAME = 'cards';
 const LOG_SHEET_NAME = 'review_log';
+const SETTINGS_SHEET_NAME = 'settings';     // personal overrides of DEFAULTS (Config.gs)
+const WEIGHTS_SHEET_NAME = 'weights_history';
 const HEADERS = [
   'id', 'title', 'keywords', 'back_content', 'back_type',
   'due', 'stability', 'difficulty', 'elapsed_days',
@@ -24,6 +26,12 @@ const TEXT_COLUMNS = [
 const LOG_HEADERS = [
   'review_time', 'card_id', 'rating', 'state_before', 'elapsed_days',
   'scheduled_days', 'stability', 'difficulty', 'hints', 'keywords', 'duration_ms'
+];
+// One row per override; a blank value means "use the default".
+const SETTINGS_HEADERS = ['key', 'value', 'updated', 'source'];
+// Append-only record of every change of the weights (rollback = a new row).
+const WEIGHTS_HEADERS = [
+  'time', 'n_reviews', 'w', 'loss_before', 'loss_after', 'source', 'note'
 ];
 
 // ─── Entry Point ───────────────────────────────────────────────────────────
@@ -82,6 +90,35 @@ function getLogSheet_() {
     hRange.setBackground('#7C3AFF').setFontColor('#FFFFFF').setFontWeight('bold');
     sheet.setFrozenRows(1);
     sheet.getRange('A:B').setNumberFormat('@');   // review_time (ISO) and card_id
+  }
+  return sheet;
+}
+
+function getSettingsSheet_(create) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(SETTINGS_SHEET_NAME);
+  if (!sheet && create) {
+    sheet = ss.insertSheet(SETTINGS_SHEET_NAME);
+    const hRange = sheet.getRange(1, 1, 1, SETTINGS_HEADERS.length);
+    hRange.setValues([SETTINGS_HEADERS]);
+    hRange.setBackground('#7C3AFF').setFontColor('#FFFFFF').setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.getRange('A:D').setNumberFormat('@');   // JSON values and ISO times stay text
+  }
+  return sheet;
+}
+
+function getWeightsSheet_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(WEIGHTS_SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(WEIGHTS_SHEET_NAME);
+    const hRange = sheet.getRange(1, 1, 1, WEIGHTS_HEADERS.length);
+    hRange.setValues([WEIGHTS_HEADERS]);
+    hRange.setBackground('#7C3AFF').setFontColor('#FFFFFF').setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    sheet.getRange('A:A').setNumberFormat('@');
+    sheet.getRange('C:C').setNumberFormat('@');
   }
   return sheet;
 }
@@ -201,7 +238,109 @@ function getDueCards() {
 function bootstrap() {
   const cards = readCards_();
   const now   = new Date();
-  return { stats: statsFrom_(cards, now), cards: dueCardsFrom_(cards, now) };
+  return {
+    stats:  statsFrom_(cards, now),
+    cards:  dueCardsFrom_(cards, now),
+    config: getConfig_()
+  };
+}
+
+// ─── Config: DEFAULTS + the user's overrides ───────────────────────────────
+// Rows of the settings tab override DEFAULTS key by key. A blank value means no
+// override; the last row of a key wins. A value that is not valid JSON, is out of
+// range or has the wrong length is ignored and reported in config.rejected.
+// config = { w, retention, max_interval, overridden: [keys], rejected: [{key, reason}] }
+
+function parseSetting_(raw) {
+  if (typeof raw === 'number') return raw;
+  try {
+    return JSON.parse(String(raw).trim());
+  } catch (err) {
+    return undefined;
+  }
+}
+
+function resolveConfig_(rows) {
+  const raw = {};
+  rows.forEach(r => {
+    const key = String(r[0]).trim();
+    if (key) raw[key] = r[1];
+  });
+  const config = JSON.parse(JSON.stringify(DEFAULTS));
+  config.overridden = [];
+  config.rejected = [];
+  Object.keys(raw).forEach(key => {
+    if (String(raw[key]).trim() === '') return;
+    const value  = parseSetting_(raw[key]);
+    const reason = value === undefined ? 'not valid JSON' : checkSetting_(key, value);
+    if (reason) {
+      config.rejected.push({ key: key, reason: reason });
+    } else {
+      config[key] = value;
+      config.overridden.push(key);
+    }
+  });
+  return config;
+}
+
+function getConfig_() {
+  const sheet = getSettingsSheet_(false);          // reading never creates the tab
+  const last  = sheet ? sheet.getLastRow() : 0;
+  const rows  = last >= 2 ? sheet.getRange(2, 1, last - 1, 2).getValues() : [];
+  return resolveConfig_(rows);
+}
+
+// patch = { key: value | null }; null removes the override. Validates everything
+// first and writes nothing on an error. A change of w is also recorded in
+// weights_history. meta (optional): { source, note, n_reviews, loss_before,
+// loss_after }.
+function saveSettings(patch, meta) {
+  const errors = {};
+  Object.keys(patch || {}).forEach(key => {
+    const reason = patch[key] === null
+      ? (key in DEFAULTS ? '' : 'unknown key') : checkSetting_(key, patch[key]);
+    if (reason) errors[key] = reason;
+  });
+  if (!patch || !Object.keys(patch).length || Object.keys(errors).length) {
+    return { ok: false, errors: errors };
+  }
+  const source = String((meta && meta.source) || 'app');
+  const now    = new Date().toISOString();
+  const lock   = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const sheet = getSettingsSheet_(true);
+    const last  = sheet.getLastRow();
+    const keys  = last >= 2 ? sheet.getRange(2, 1, last - 1, 1).getValues() : [];
+    Object.keys(patch).forEach(key => {
+      const value = patch[key] === null ? '' : JSON.stringify(patch[key]);
+      const row   = [key, value, now, source];
+      const at    = keys.map(r => String(r[0]).trim()).lastIndexOf(key);
+      if (at >= 0) {
+        sheet.getRange(at + 2, 1, 1, row.length).setValues([row]);
+      } else {
+        sheet.appendRow(row);
+        keys.push([key]);
+      }
+    });
+    if ('w' in patch) logWeights_(patch.w, source, meta || {}, now);
+  } finally {
+    lock.releaseLock();
+  }
+  return { ok: true, config: getConfig_() };
+}
+
+function logWeights_(w, source, meta, now) {
+  try {
+    const num = v => (typeof v === 'number' && isFinite(v) ? v : '');
+    getWeightsSheet_().appendRow([
+      now, num(meta.n_reviews), w === null ? '' : JSON.stringify(w),
+      num(meta.loss_before), num(meta.loss_after), source,
+      String(meta.note || (w === null ? 'back to defaults' : ''))
+    ]);
+  } catch (err) {
+    console.error('weights history failed: ' + err);   // never fail the save
+  }
 }
 
 // ─── API: updateCard ───────────────────────────────────────────────────────
@@ -340,6 +479,8 @@ function setupSheet() {
   const sheet = getSheet_();
   applyTextFormat_(sheet, sheet.getLastRow() + 1);   // safe to re-run
   getLogSheet_();
+  getSettingsSheet_(true);
   SpreadsheetApp.getUi().alert(
-    '✅ Sheets "cards" and "review_log" are ready!\n\nAdd cards manually or via the sheet tab.');
+    '✅ Sheets "cards", "review_log" and "settings" are ready!\n\n' +
+    'Add cards manually or via the sheet tab.');
 }

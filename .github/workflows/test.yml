@@ -34,6 +34,7 @@ jobs:
       - run: node test/fsrs-golden.mjs
       - run: node test/spell.mjs
       - run: node test/code.mjs
+      - run: node test/config.mjs
       - run: node test/contrast.mjs
 
   # index.html in jsdom with a stubbed google.script.run
