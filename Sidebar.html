@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<?!= shell.scripts ?>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.4 system-ui, sans-serif; color: #24292f;
+    display: flex; flex-direction: column;
+  }
+  #meta { padding: 6px 10px; border-bottom: 1px solid #d0d7de; color: #57606a; font-size: 12px; }
+  #note { padding: 10px; color: #57606a; }
+  #view { flex: 1; width: 100%; border: 0; }
+</style>
+</head>
+<body>
+<div id="meta"></div>
+<div id="note">Select a card row.</div>
+<iframe id="view" sandbox="allow-popups allow-popups-to-escape-sandbox" hidden></iframe>
+<script>
+<?!= shell.render ?>
+</script>
+<script>
+const APP_CSS = <?!= JSON.stringify(shell.css).replace(/</g, '\\u003c') ?>;
+// Same markup as the app's #back-content, inside a sandboxed frame (no scripts,
+// no access to this page), so card CSS can not leak into the sidebar either.
+const FRAME_CSS = 'html,body{margin:0;height:auto;min-height:0;display:block;overflow:auto}' +
+  'body{padding:12px;background:#fff}';
+let lastKey = '';
+
+function show(res) {
+  const note = document.getElementById('note');
+  const frame = document.getElementById('view');
+  const meta = document.getElementById('meta');
+  if (res.note) {
+    note.textContent = res.note;
+    note.hidden = false;
+    frame.hidden = true;
+    meta.textContent = '';
+    lastKey = '';
+    return;
+  }
+  const key = [res.row, res.type, res.content].join('\u0001');
+  if (key === lastKey) return;
+  lastKey = key;
+  note.hidden = true;
+  frame.hidden = false;
+  meta.textContent = 'row ' + res.row + ' · ' + res.id + ' · ' + res.type;
+  frame.srcdoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + APP_CSS +
+    FRAME_CSS + '</style></head><body><div class="back-content" id="back-content">' +
+    renderHtml(res.content, res.type) + '</div></body></html>';
+}
+
+function poll() {
+  if (document.hidden) return;
+  google.script.run
+    .withSuccessHandler(show)
+    .withFailureHandler(err => show({ note: 'Error: ' + err.message }))
+    .getActiveRowPreview();
+}
+
+setInterval(poll, 1500);
+poll();
+</script>
+</body>
+</html>

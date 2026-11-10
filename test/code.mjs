@@ -12,9 +12,10 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
-  // Apps Script shares one global scope across files: Config.gs first, then Code.gs
-  const code = [path.join(path.dirname(file), 'Config.gs'), file]
-    .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+  // Apps Script shares one global scope across files
+  const root = path.dirname(file);
+  const code = ['Config.gs', 'Highlight.gs', 'Preview.gs'].map((f) => path.join(root, f))
+    .concat(file).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
   const stats = { calls: {}, locks: 0, failAppend: false };
   const bump = (name) => {
     stats.calls[name] = (stats.calls[name] || 0) + 1;
@@ -44,7 +45,23 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
       this.name = name;
       this.cells = new Map();
       this.fmt = new Map();
+      this.rich = new Map();       // rich text values written with setRichTextValues
+      this.heights = new Map();
+      this.active = { r: 2, c: 1 };
       this.maxRows = 1000;
+    }
+    getName() {
+      return this.name;
+    }
+    setRowHeight(r, h) {
+      this.heights.set(r, h);
+    }
+    clear() {
+      this.cells.clear();
+      this.rich.clear();
+    }
+    getActiveRange() {
+      return new Range(this, this.active.r, this.active.c, 1, 1);
     }
     key(r, c) {
       return `${r},${c}`;
@@ -52,6 +69,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     put(r, c, v) {
       const stored = this.fmt.get(this.key(r, c)) === '@' ? v : convert(v);
       this.cells.set(this.key(r, c), stored);
+      this.rich.delete(this.key(r, c));          // a plain write drops the styling
     }
     raw(r, c, v) {   // test helper: store without conversion
       this.cells.set(this.key(r, c), v);
@@ -171,10 +189,80 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
       this.applyFormat(f);
       return this;
     }
+    getSheet() { return this.sheet; }
+    getRow() { return this.r; }
+    getColumn() { return this.c; }
+    getNumRows() { return this.nr; }
+    getNumColumns() { return this.nc; }
+    getFormulas() {
+      bump('getFormulas');
+      const out = [];
+      for (let i = 0; i < this.nr; i++) {
+        const row = [];
+        for (let j = 0; j < this.nc; j++) {
+          const v = this.sheet.get(this.r + i, this.c + j);
+          row.push(v && v.formula ? v.formula : '');
+        }
+        out.push(row);
+      }
+      return out;
+    }
+    setFormulas(vals) {
+      bump('setFormulas');
+      vals.forEach((row, i) => row.forEach((f, j) => {
+        const key = this.sheet.key(this.r + i, this.c + j);
+        this.sheet.cells.set(key, f === '' ? '' : { formula: f });
+      }));
+      return this;
+    }
+    setFormula(f) {
+      return this.setFormulas([[f]]);
+    }
+    setRichTextValues(vals) {
+      bump('setRichTextValues');
+      vals.forEach((row, i) => row.forEach((v, j) => {
+        this.sheet.put(this.r + i, this.c + j, v.text);
+        this.sheet.rich.set(this.sheet.key(this.r + i, this.c + j), v);
+      }));
+      return this;
+    }
+    getRichTextValue() {
+      const key = this.sheet.key(this.r, this.c);
+      return this.sheet.rich.get(key) || richValue('' + this.sheet.get(this.r, this.c), []);
+    }
     setBackground() { return this; }
     setFontColor() { return this; }
     setFontWeight() { return this; }
   }
+
+  // Rich text model: { text, runs: [{ s, e, style }] }; getRuns() lists the styled runs
+  const richValue = (text, runs) => ({
+    text, runs,
+    getRuns: () => runs.map((r) => ({
+      getText: () => text.slice(r.s, r.e),
+      getTextStyle: () => ({ getForegroundColor: () => r.style.color || null }),
+    })),
+  });
+  const richBuilder = () => {
+    let text = '';
+    const runs = [];
+    const b = {
+      setText(t) { text = t; return b; },
+      setTextStyle(s, e, style) { runs.push({ s, e, style }); return b; },
+      build: () => richValue(text, runs.slice()),
+    };
+    return b;
+  };
+  const styleBuilder = () => {
+    const st = {};
+    const b = {
+      setForegroundColor(c) { st.color = c; return b; },
+      setBold(v) { st.bold = v; return b; },
+      setItalic(v) { st.italic = v; return b; },
+      build: () => ({ ...st }),
+    };
+    return b;
+  };
 
   const sheets = new Map();
   const ss = {
@@ -187,13 +275,29 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     },
   };
   const cache = new Map();
+  const menu = { items: [], opened: [] };
   const ctx = vm.createContext({
     Date,
     console: { log: console.log, error() {} },
     SpreadsheetApp: {
-      getActiveSpreadsheet: () => ss,
+      getActiveSpreadsheet: () => Object.assign(ss, { toast: (m) => (menu.toast = m) }),
+      getActiveSheet: () => ctx.__active || null,
+      newRichTextValue: richBuilder,
+      newTextStyle: styleBuilder,
       flush: () => bump('flush'),
-      getUi: () => ({ alert() {} }),
+      getUi: () => ({
+        alert() {},
+        createMenu(name) {
+          const m = {
+            addItem(label, fn) { menu.items.push([name, label, fn]); return m; },
+            addSeparator() { return m; },
+            addToUi() {},
+          };
+          return m;
+        },
+        showSidebar: (page) => menu.opened.push(['sidebar', page]),
+        showModelessDialog: (page, title) => menu.opened.push(['window', page, title]),
+      }),
     },
     LockService: {
       getScriptLock: () => ({
@@ -211,15 +315,32 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
       DigestAlgorithm: { MD5: 'md5' },
       computeDigest: (alg, s) => [...crypto.createHash(alg).update(s).digest()],
       base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString('base64url'),
+      Charset: { UTF_8: 'utf8' },
+      base64Encode: (s, cs) => Buffer.from(s, cs).toString('base64'),
     },
-    HtmlService: {},
+    HtmlService: {
+      createHtmlOutputFromFile: (n) => ({
+        getContent: () => fs.readFileSync(path.join(root, n + '.html'), 'utf8'),
+      }),
+      createTemplateFromFile: (n) => {
+        const page = {
+          name: n,
+          setTitle(t) { page.title = t; return page; },
+          setWidth(w) { page.width = w; return page; },
+          setHeight(h) { page.height = h; return page; },
+        };
+        return { evaluate: () => page };
+      },
+    },
     ScriptApp: { getService: () => ({ getUrl: () => ctx.__url }) },
   });
   const api = vm.runInContext(
     `${code}\n({ getDueCards, getStats, updateCard, setupSheet, getDocsUrl, HEADERS, DEFAULTS,` +
-    ` saveSettings,` +
+    ` saveSettings, onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
+    ` tokenize_, sniffType_, thumbFormula_, appShell_, getActiveRowPreview,` +
+    ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
-  return { api, ss, sheets, stats, Sheet, ctx };
+  return { api, ss, sheets, stats, Sheet, ctx, menu };
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
@@ -575,6 +696,210 @@ if (isMain) {
     assert.deepEqual(st.getRange(1, 1, 1, 4).getValues()[0],
       ['key', 'value', 'updated', 'source']);
     assert.equal(st.fmt.get('2,2'), '@');
+  });
+
+  // ── sheet tools: highlight, sniffing, thumbnails, preview ────────────────
+  const toolSheet = (rows, { thumb = false } = {}) => {
+    const env = fixture();
+    if (thumb) {
+      env.sheet.raw(1, 17, 'back_thumb');
+    }
+    rows.forEach((r, i) => env.put(i + 2, r));
+    return env;
+  };
+  const edit = (env, r, c, nr = 1, nc = 1) =>
+    env.api.onEdit({ range: env.sheet.getRange(r, c, nr, nc) });
+  // [[styled text, color | 'bold' | 'italic'], ...] of a cell, or null when never styled
+  const runs = (env, r, c = 4) => {
+    const v = env.sheet.rich.get(`${r},${c}`);
+    return v && v.runs.map((x) => [v.text.slice(x.s, x.e),
+      x.style.color || (x.style.bold ? 'bold' : 'italic')]);
+  };
+  const svgDoc = '<svg viewBox="0 0 10 10"><circle r="4"/></svg>';
+  const b64Of = (formula) =>
+    Buffer.from(formula.slice(formula.indexOf('base64,') + 7, -2), 'base64').toString();
+
+  test('onEdit styles back_content, fills a blank back_type, keeps a set one', () => {
+    const env = toolSheet([
+      { id: 'a', back_content: '<b class="x">hi</b>', back_type: '' },
+      { id: 'b', back_content: '# T', back_type: 'text' },
+    ]);
+    edit(env, 2, 4, 2);
+    const c = (cls) => env.api.HL_STYLES[cls].color;
+    assert.deepEqual(runs(env, 2), [['<b', c('tag')], ['class', c('attr')], ['"x"', c('string')],
+      ['>', c('tag')], ['</b', c('tag')], ['>', c('tag')]]);
+    assert.equal(env.sheet.get(2, 5), 'html');
+    assert.equal(env.sheet.get(3, 5), 'text');
+    assert.deepEqual(runs(env, 3), []);
+    assert.equal(env.stats.calls.setRichTextValues, 1, 'one write for consecutive rows');
+  });
+
+  test('edits elsewhere are ignored: other columns, header row, other sheets, no range', () => {
+    const env = toolSheet([{ id: 'a', back_content: '<b>x</b>', back_type: 'html' }]);
+    edit(env, 2, 1);
+    edit(env, 1, 4);
+    const other = env.ss.insertSheet('other');
+    other.raw(1, 1, '<b>');
+    env.api.onEdit({ range: other.getRange(1, 1, 1, 1) });
+    env.api.onEdit({});
+    assert.equal(env.stats.calls.setRichTextValues, undefined);
+  });
+
+  test('formulas, numbers and blank cells are left alone', () => {
+    const env = toolSheet([
+      { id: 'a' }, { id: 'b', back_content: '<b>x</b>', back_type: 'html' },
+      { id: 'c' }, { id: 'd', back_content: 7 },
+    ]);
+    env.sheet.cells.set('2,4', { formula: '=B2' });
+    edit(env, 2, 4, 4);
+    assert.deepEqual(env.sheet.get(2, 4), { formula: '=B2' });
+    assert.equal(runs(env, 3).length, 4);
+    assert.equal(env.sheet.get(5, 4), 7);
+    assert.equal(env.sheet.get(5, 5), '');
+    assert.equal(env.stats.calls.setRichTextValues, 1);
+  });
+
+  test('editing back_type restyles the row; clearing it sniffs again', () => {
+    const env = toolSheet([{ id: 'a', back_content: '**x** <b>y</b>', back_type: 'md' }]);
+    edit(env, 2, 4);
+    assert.deepEqual(runs(env, 2).map((r) => r[0]), ['**x**', '<b', '>', '</b', '>']);
+    env.sheet.put(2, 5, 'text');
+    edit(env, 2, 5);
+    assert.deepEqual(runs(env, 2), []);
+    env.sheet.put(2, 5, '');
+    edit(env, 2, 5);
+    assert.equal(env.sheet.get(2, 5), 'html');
+    assert.equal(runs(env, 2).length, 4, 'now styled as html');
+  });
+
+  test('thumbnails: svg rows get an IMAGE data URI, others none, only with the column', () => {
+    const env = toolSheet([
+      { id: 'a', back_content: svgDoc, back_type: 'svg' },
+      { id: 'b', back_content: '<b>x</b>', back_type: 'html' },
+    ], { thumb: true });
+    edit(env, 2, 4, 2);
+    const f = env.sheet.get(2, 17).formula;
+    assert.match(f, /^=IMAGE\("data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+"\)$/);
+    assert.equal(b64Of(f), svgDoc.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"'));
+    assert.equal(env.sheet.get(3, 17), '');
+    assert.equal(env.sheet.heights.get(2), 72);
+    env.sheet.put(2, 5, 'html');                      // no longer an svg: thumbnail goes
+    edit(env, 2, 5);
+    assert.equal(env.sheet.get(2, 17), '');
+    const none = toolSheet([{ id: 'a', back_content: svgDoc, back_type: 'svg' }]);
+    edit(none, 2, 4);
+    assert.equal(none.stats.calls.setFormulas, undefined, 'no column, no thumbnails');
+  });
+
+  test('thumbFormula_: non-svg, existing xmlns, size limit, UTF-8', () => {
+    const t = loadCodeGs().api.thumbFormula_;
+    assert.equal(t('<b>x</b>'), '');
+    assert.equal(t(''), '');
+    const kept = b64Of(t('<svg xmlns="http://www.w3.org/2000/svg"/>'));
+    assert.equal(kept.match(/xmlns/g).length, 1);
+    assert.equal(t('<svg>' + 'x'.repeat(40000) + '</svg>'), '', 'over 45 000 characters');
+    assert.equal(b64Of(t('<svg><text>桜😀</text></svg>')).includes('桜😀'), true);
+  });
+
+  test('one edit restyles at most 500 rows; Highlight all covers the rest in chunks', () => {
+    const rows = Array.from({ length: 600 }, (_, i) =>
+      ({ id: 'c' + i, back_content: '<b>x</b>', back_type: 'html' }));
+    const env = toolSheet(rows);
+    edit(env, 2, 4, 600);
+    assert.ok(env.sheet.rich.get('501,4'));
+    assert.equal(env.sheet.rich.get('502,4'), undefined);
+    assert.equal(env.stats.calls.setRichTextValues, 1);
+    const total = plain(env.api.highlightAll());
+    assert.deepEqual(total, { styled: 600, typed: 0, thumbs: 0 });
+    assert.equal(env.stats.calls.setRichTextValues, 3, 'two chunks of 300');
+    assert.ok(env.sheet.rich.get('601,4'));
+    assert.match(env.menu.toast, /^600 cells styled, 0 back_type filled$/);
+  });
+
+  test('typing a pasted block fills blank types in one write', () => {
+    const rows = [{ id: 'a', back_content: '# h' }, { id: 'b', back_content: '<p>x</p>' },
+      { id: 'c', back_content: 'plain' }, { id: 'd', back_content: svgDoc }];
+    const env = toolSheet(rows);
+    edit(env, 2, 4, 4);
+    assert.deepEqual([2, 3, 4, 5].map((r) => env.sheet.get(r, 5)), ['md', 'html', 'text', 'svg']);
+    assert.equal(env.stats.calls.setValues, 1);
+  });
+
+  test('addThumbnailColumn adds the header once after the last column and fills it', () => {
+    const env = toolSheet([{ id: 'a', back_content: svgDoc, back_type: 'svg' }]);
+    const total = plain(env.api.addThumbnailColumn());
+    assert.equal(env.sheet.get(1, 17), 'back_thumb');
+    assert.equal(total.thumbs, 1);
+    assert.match(env.sheet.get(2, 17).formula, /^=IMAGE\(/);
+    env.api.addThumbnailColumn();
+    assert.equal(env.sheet.get(1, 18), '', 'no second column');
+  });
+
+  test('the app never receives back_thumb', () => {
+    const env = toolSheet([{ id: 'a', back_content: svgDoc, back_type: 'svg' }], { thumb: true });
+    edit(env, 2, 4);
+    const card = plain(env.api.bootstrap()).cards[0];
+    assert.equal(card.id, 'a');
+    assert.equal('back_thumb' in card, false);
+    assert.equal(card.back_content, svgDoc);
+  });
+
+  test('Flash menu: every item points at a function that exists', () => {
+    const env = loadCodeGs();
+    env.api.onOpen();
+    assert.deepEqual(env.menu.items.map((i) => i[0]), Array(5).fill('Flash'));
+    for (const [, , fn] of env.menu.items) {
+      assert.equal(vm.runInContext('typeof ' + fn, env.ctx), 'function', fn);
+    }
+  });
+
+  test('getActiveRowPreview: notes off the cards sheet or on the header, else the row', () => {
+    const env = toolSheet([
+      { id: 'a', title: 'T', back_content: '<b>x</b>', back_type: ' HTML ' },
+      { id: 'b', back_content: 'plain', back_type: '' },
+    ]);
+    env.ctx.__active = env.sheet;
+    env.sheet.active = { r: 2, c: 1 };
+    assert.deepEqual(plain(env.api.getActiveRowPreview()),
+      { row: 2, id: 'a', title: 'T', type: 'html', content: '<b>x</b>' });
+    env.sheet.active = { r: 3, c: 4 };
+    assert.equal(env.api.getActiveRowPreview().type, 'text', 'blank type: text, like the app');
+    env.sheet.active = { r: 1, c: 1 };
+    assert.match(env.api.getActiveRowPreview().note, /below the header/);
+    env.ctx.__active = env.ss.insertSheet('other');
+    assert.match(env.api.getActiveRowPreview().note, /"cards" sheet/);
+  });
+
+  test('appShell_ takes css, pinned scripts and the render block from index.html', () => {
+    const shell = loadCodeGs().api.appShell_();
+    assert.match(shell.css, /\.back-content\s*\{/);
+    assert.equal((shell.scripts.match(/<script/g) || []).length, 2);
+    assert.match(shell.scripts, /marked@\d+\.\d+\.\d+\/lib\/marked\.umd\.js/);
+    assert.match(shell.scripts, /dompurify@\d+\.\d+\.\d+\/dist\/purify\.min\.js/);
+    assert.match(shell.render, /function renderHtml\(content, type\)/);
+    assert.equal(shell.render.includes('@render-begin'), false);
+  });
+
+  test('preview opens as sidebar or as a 640 px window, titled "Card preview"', () => {
+    const env = loadCodeGs();
+    env.api.showPreviewSidebar();
+    env.api.showPreviewWindow();
+    const [side, win] = env.menu.opened;
+    assert.equal(side[0], 'sidebar');
+    assert.equal(side[1].title, 'Card preview');
+    assert.equal(side[1].name, 'Sidebar');
+    assert.deepEqual([win[0], win[1].width, win[1].height, win[2]],
+      ['window', 640, 560, 'Card preview']);
+  });
+
+  test('checkSheetTools writes _flash_check and finds no offset mismatch in the model', () => {
+    const env = loadCodeGs();
+    assert.deepEqual(plain(env.api.checkSheetTools()), { offsetMismatches: 0 });
+    const sheet = env.sheets.get('_flash_check');
+    assert.match(sheet.get(1, 2), /^ok:/);
+    assert.match(sheet.get(2, 1).formula, /^=IMAGE\("data:image\/svg\+xml;base64,/);
+    env.api.checkSheetTools();                        // can be run again
+    assert.match(sheet.get(1, 2), /^ok:/);
   });
 
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {

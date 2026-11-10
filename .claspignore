@@ -2,6 +2,9 @@
 **/**
 !Code.gs
 !Config.gs
+!Highlight.gs
+!Preview.gs
+!Sidebar.html
 !index.html
 !docs.html
 !appsscript.json

@@ -4,6 +4,8 @@ const SHEET_NAME = 'cards';
 const LOG_SHEET_NAME = 'review_log';
 const SETTINGS_SHEET_NAME = 'settings';     // personal overrides of DEFAULTS (Config.gs)
 const WEIGHTS_SHEET_NAME = 'weights_history';
+// Optional column of SVG thumbnails (Highlight.gs); never sent to the app
+const THUMB_HEADER = 'back_thumb';
 const HEADERS = [
   'id', 'title', 'keywords', 'back_content', 'back_type',
   'due', 'stability', 'difficulty', 'elapsed_days',
@@ -201,7 +203,9 @@ function readCards_() {
     .filter(row => row[0]) // must have id
     .map(row => {
       const c = {};
-      headers.forEach((h, i) => c[h] = row[i]);
+      headers.forEach((h, i) => {
+        if (h !== THUMB_HEADER) c[h] = row[i];
+      });
       return c;
     });
 }

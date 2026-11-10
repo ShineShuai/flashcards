@@ -345,6 +345,7 @@ td code { font-size: .82rem; }
   <a class="nav-link" href="#schema">Sheet Schema</a>
   <a class="nav-link" href="#back-types">Back Card Types</a>
   <a class="nav-link" href="#drive-images">Drive Images</a>
+  <a class="nav-link" href="#sheet-tools">Sheet Tools</a>
 
   <div class="nav-section">Using the App</div>
   <a class="nav-link" href="#session">Review Session</a>
@@ -430,8 +431,16 @@ td code { font-size: .82rem; }
   <span class="dir">Apps Script project/</span><br>
   &nbsp;&nbsp;<span class="file">Code.gs</span>
     <span class="note">← GAS backend: sheet R/W, doGet, FSRS field write-back</span><br>
+  &nbsp;&nbsp;<span class="file">Config.gs</span>
+    <span class="note">← default FSRS weights, retention, max interval</span><br>
+  &nbsp;&nbsp;<span class="file">Highlight.gs</span>
+    <span class="note">← Flash menu: syntax highlight, back_type sniffing, SVG thumbnails</span><br>
+  &nbsp;&nbsp;<span class="file">Preview.gs</span> + <span class="file">Sidebar.html</span>
+    <span class="note">← Flash menu: card preview in the sheet</span><br>
   &nbsp;&nbsp;<span class="file">index.html</span>
-    <span class="note">← Full SPA: FSRS-6 JS, UI, card flip, keyword reveal</span>
+    <span class="note">← Full SPA: FSRS-6 JS, UI, card flip, keyword reveal</span><br>
+  &nbsp;&nbsp;<span class="file">docs.html</span>
+    <span class="note">← this page</span>
 </div>
 
 <table>
@@ -443,9 +452,24 @@ td code { font-size: .82rem; }
       <td>Rarely — only to change sheet tab name or add functions</td>
     </tr>
     <tr>
+      <td><code>Config.gs</code></td>
+      <td>The general defaults: 21 FSRS weights, desired retention, maximum interval.</td>
+      <td>No — override per sheet in the <strong>settings</strong> tab instead</td>
+    </tr>
+    <tr>
+      <td><code>Highlight.gs</code>, <code>Preview.gs</code>, <code>Sidebar.html</code></td>
+      <td>The Flash menu in the spreadsheet (see Sheet Tools). Optional: the app works without them, but all three belong together.</td>
+      <td>No</td>
+    </tr>
+    <tr>
       <td><code>index.html</code></td>
       <td>Entire frontend in one file. Contains CSS, HTML, and FSRS-6 JavaScript.</td>
-      <td>To tweak UI, colors, or FSRS W parameters</td>
+      <td>To tweak UI or colors</td>
+    </tr>
+    <tr>
+      <td><code>docs.html</code></td>
+      <td>This documentation, opened from the app.</td>
+      <td>No</td>
     </tr>
   </tbody>
 </table>
@@ -483,22 +507,22 @@ td code { font-size: .82rem; }
   <li class="step">
     <div class="step-num">2</div>
     <div class="step-body">
-      <h4>Paste Code.gs</h4>
-      <p>Click the default file (usually <em>Code.gs</em>). Delete everything and paste the full contents of <code>Code.gs</code>.</p>
+      <h4>Paste the script files</h4>
+      <p>Click the default file (usually <em>Code.gs</em>). Delete everything and paste the full contents of <code>Code.gs</code>. Then add <strong>+ (New file) → Script</strong> for each of <code>Config</code>, <code>Highlight</code> and <code>Preview</code> (GAS adds .gs) and paste the matching file.</p>
     </div>
   </li>
   <li class="step">
     <div class="step-num">3</div>
     <div class="step-body">
-      <h4>Create index.html</h4>
-      <p>Click <strong>+ (New file) → HTML</strong>. Name it exactly <code>index</code> (no extension — GAS adds .html automatically). Delete everything and paste the full contents of <code>index.html</code>.</p>
+      <h4>Create the HTML files</h4>
+      <p>Click <strong>+ (New file) → HTML</strong> and name it exactly <code>index</code> (no extension — GAS adds .html automatically). Delete everything and paste the full contents of <code>index.html</code>. Do the same for <code>Sidebar</code> and <code>docs</code>.</p>
     </div>
   </li>
   <li class="step">
     <div class="step-num">4</div>
     <div class="step-body">
-      <h4>Save both files</h4>
-      <p>Cmd/Ctrl+S or click the floppy disk icon. Both files must be saved before deploying.</p>
+      <h4>Save all files</h4>
+      <p>Cmd/Ctrl+S or click the floppy disk icon. All files must be saved before deploying.</p>
     </div>
   </li>
 </ol>
@@ -690,6 +714,17 @@ Blooms ~2 weeks, late March to early April.</pre>
 </ol>
 
 <!-- ── Session ────────────────────────────────────────────────────────── -->
+<h2 id="sheet-tools">Sheet Tools (Flash menu)</h2>
+
+<p>After saving the script, reload the spreadsheet: a <strong>Flash</strong> menu appears. The first time you use an item, Google asks for authorization.</p>
+<ul>
+  <li><strong>Highlight (automatic).</strong> Every edit of a <code>back_content</code> or <code>back_type</code> cell colors html, svg and Markdown source: tags, attributes, strings, comments, headings, code and links. It happens when you leave the cell, not while you type. A blank <code>back_type</code> is filled by looking at the content (svg, html, md or text); a type you set is never changed. Formulas, numbers and dates are left alone. One edit restyles up to 500 rows; <strong>Highlight all back_content</strong> does the rest, for example after an import.</li>
+  <li><strong>Preview card (sidebar / window).</strong> Shows the back of the selected row as the app renders it: same sanitizer, same styles, updated about every 1.5 seconds. The window is wider, for SVG and tables.</li>
+  <li><strong>Add SVG thumbnail column.</strong> Adds a <code>back_thumb</code> column (once) with the picture of each svg row as an <code>=IMAGE</code> formula; those rows get taller. The app ignores this column; delete it to stop.</li>
+  <li><strong>Check sheet tools.</strong> Writes a sheet <code>_flash_check</code> to confirm on your account that styling after an emoji lands on the right text (B1) and that <code>IMAGE</code> shows a data URI (A2 should show a pink circle). Delete the sheet afterwards.</li>
+</ul>
+<p>A spreadsheet cell can not show HTML, so the cell shows colored source and the preview shows the result. The colors suit a white sheet (contrast at least 4.5:1).</p>
+
 <h2 id="session">Review Session</h2>
 
 <p>Open the <code>/exec</code> URL. The home screen shows today's due count. Hit <strong>Start Review</strong>.</p>
