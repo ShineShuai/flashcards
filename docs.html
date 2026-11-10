@@ -591,7 +591,7 @@ td code { font-size: .82rem; }
     <tr><td>2</td><td><code>title</code></td>       <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>Short prompt shown first before any hints. Optional but recommended.</td></tr>
     <tr><td>3</td><td><code>keywords</code></td>    <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>Semicolons or commas: <code>cat;feline;pet</code></td></tr>
     <tr><td>4</td><td><code>back_content</code></td><td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>The answer text, Markdown, or HTML</td></tr>
-    <tr><td>5</td><td><code>back_type</code></td>   <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td><code>text</code> · <code>md</code> · <code>html</code></td></tr>
+    <tr><td>5</td><td><code>back_type</code></td>   <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td><code>text</code> · <code>md</code> · <code>html</code> · <code>svg</code></td></tr>
     <tr><td>6</td><td><code>due</code></td>          <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Leave blank for new cards</td></tr>
     <tr><td>7</td><td><code>stability</code></td>    <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>FSRS memory stability</td></tr>
     <tr><td>8</td><td><code>difficulty</code></td>   <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>FSRS card difficulty (1–10)</td></tr>
@@ -622,7 +622,7 @@ Japanese flowering cherry.
 Blooms ~2 weeks, late March to early April.</pre>
 
 <h3>back_type = md</h3>
-<p>Standard Markdown rendered via marked.js. Supports headings, lists, bold, italic, tables, code, blockquotes, and image syntax.</p>
+<p>Standard Markdown rendered via marked.js and then sanitized like HTML (below). Supports headings, lists, bold, italic, tables, code, blockquotes, and image syntax.</p>
 <pre>
 ## 桜 Cherry Blossom
 - **Species:** *Prunus serrulata*
@@ -633,7 +633,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 </pre>
 
 <h3>back_type = html</h3>
-<p>Raw HTML injected directly. Full control over layout, images, and styles.</p>
+<p>HTML for layout, images, and styles, shown after sanitizing with DOMPurify. <strong>Kept:</strong> text formatting, tables, lists, <code>&lt;details&gt;</code>, images (https and <code>data:</code>), <code>&lt;video&gt;</code>, <code>&lt;audio&gt;</code>, inline SVG, and the <code>style</code> attribute. <strong>Removed:</strong> <code>&lt;script&gt;</code>, event handlers such as <code>onclick</code>, <code>javascript:</code> links, <code>&lt;iframe&gt;</code>, <code>&lt;object&gt;</code>, <code>&lt;embed&gt;</code>, <code>&lt;meta&gt;</code>, <code>&lt;form&gt;</code>, and <code>&lt;style&gt;</code> blocks (use <code>style</code> attributes instead). Links open in a new tab. This protects the app when you paste web or AI-generated content.</p>
 <pre>
 &lt;h2&gt;桜&lt;/h2&gt;
 &lt;img src="https://drive.google.com/thumbnail?id=FILE_ID&amp;sz=w1000"
@@ -643,6 +643,15 @@ Blooms ~2 weeks, late March to early April.</pre>
   &lt;li&gt;Blooms ~2 weeks&lt;/li&gt;
   &lt;li&gt;Symbol of mono no aware&lt;/li&gt;
 &lt;/ul&gt;
+</pre>
+
+<h3>back_type = svg</h3>
+<p>One inline <code>&lt;svg&gt;</code> element, sanitized like HTML. Give it a <code>viewBox</code> and <code>style="max-width:100%;height:auto"</code> so it scales. Scripts, <code>&lt;style&gt;</code> blocks and event handlers inside the SVG are removed; use presentation attributes (<code>fill</code>, <code>stroke</code>).</p>
+<pre>
+&lt;svg viewBox="0 0 100 100" style="max-width:240px"&gt;
+  &lt;circle cx="50" cy="50" r="40" fill="#FFB7C5"/&gt;
+  &lt;text x="50" y="58" text-anchor="middle" font-size="28"&gt;桜&lt;/text&gt;
+&lt;/svg&gt;
 </pre>
 
 <!-- ── Drive images ────────────────────────────────────────────────────── -->
@@ -894,8 +903,8 @@ Blooms ~2 weeks, late March to early April.</pre>
     </tr>
     <tr>
       <td>Markdown not rendering</td>
-      <td>marked.js CDN failed to load</td>
-      <td>Check the browser console and CDN access. The page pins <code>marked@18.1.1/lib/marked.umd.js</code> with an integrity hash; if it is blocked, md cards show their source text with a notice instead of breaking. To self-host, inline that file in a <code>&lt;script&gt;</code> block in <code>index.html</code></td>
+      <td>marked.js or DOMPurify CDN failed to load</td>
+      <td>Check the browser console and CDN access. The page pins <code>marked@18.1.1/lib/marked.umd.js</code> with an integrity hash; if it is blocked, md cards show their source text with a notice instead of breaking. DOMPurify (<code>dompurify@3.4.17/dist/purify.min.js</code>) is pinned the same way; without it, md, html and svg cards show their source text with a notice rather than unsanitized content. To self-host, inline that file in a <code>&lt;script&gt;</code> block in <code>index.html</code></td>
     </tr>
     <tr>
       <td>Home screen shows 0 cards but sheet has cards</td>

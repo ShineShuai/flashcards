@@ -46,7 +46,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-      - run: npm install --no-save --no-package-lock jsdom@31.0.0
+      - run: npm install --no-save --no-package-lock jsdom@31.0.0 dompurify@3.4.17 marked@18.1.1
       - run: |
           for f in test/ui/*.test.mjs; do
             echo "== $f"
@@ -66,7 +66,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: node test/layout.mjs
 
-  # The pinned marked <script> integrity hash vs the npm package (needs network)
+  # The pinned marked and DOMPurify <script> integrity hashes vs their npm packages (needs network)
   integrity:
     runs-on: ubuntu-latest
     timeout-minutes: 5

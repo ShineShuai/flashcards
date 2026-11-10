@@ -1,6 +1,11 @@
 // Shared jsdom harness: loads index.html with a stubbed google.script.run.
-// Needs jsdom:  npm install --no-save jsdom
+// Needs:  npm install --no-save jsdom dompurify marked   (versions: see test.yml)
+import { createRequire } from 'node:module';
 import { JSDOM } from 'jsdom';
+
+const require = createRequire(import.meta.url);
+const createDOMPurify = require('dompurify');
+const realMarked = require('marked');
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +14,7 @@ process.env.TZ ||= 'Europe/Berlin';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const html = fs.readFileSync(path.join(here, '..', '..', 'index.html'), 'utf8')
-  .replace(/<script src="https:\/\/cdn[^>]*><\/script>/, '')   // marked: stubbed below
+  .replace(/<script src="https:\/\/cdn[^>]*><\/script>/g, '')   // marked, DOMPurify: below
   .replace(/<link[^>]*fonts[^>]*>/, '');
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,10 +35,12 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 
 // options: cards, storage (initial localStorage), dark (system theme), blockStorage,
 //          docsFail, failDue (getDueCards fails), config (sent with bootstrap),
+//          realMarkdown (real marked instead of an identity stub), noSanitizer,
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
-          docsFail = false, failDue = false, config, server = {} } = options;
+          docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
+          server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], ...server };
   const dom = new JSDOM(html, {
@@ -41,7 +48,10 @@ export function boot(options = {}) {
     url: 'https://example.test/',
     pretendToBeVisual: true,
     beforeParse(w) {
-      w.marked = { parse: (x) => x };
+      w.marked = realMarkdown ? realMarked : { parse: (x) => x };
+      if (!noSanitizer) {
+        w.DOMPurify = createDOMPurify(w);               // the real one, bound to this window
+      }
       w.alert = () => {};
       w.matchMedia = (q) => ({ matches: dark && /dark/.test(q), addEventListener() {} });
       w.URL.createObjectURL = () => 'blob:test';

@@ -26,6 +26,10 @@
 <script src="https://cdn.jsdelivr.net/npm/marked@18.1.1/lib/marked.umd.js"
   integrity="sha384-rATToyt6602Jnq8c7w8HZwmyOUgPL7mzxX01FBWoV48ns/EgkakGozpES+PnaYOI"
   crossorigin="anonymous"></script>
+<!-- sanitizer for html / md / svg cards; pinned + integrity-checked like marked -->
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.17/dist/purify.min.js"
+  integrity="sha384-P0JNneQf81HOl9VwNXK76cQ9VMD6Nfsnepxb0cCOg8+UzEdzgPHAPV4wVQrvYQSx"
+  crossorigin="anonymous"></script>
 <style>
 :root {
   --pink:    #FF2D87;
@@ -1278,24 +1282,53 @@ function renderFront() {
 function renderBack(card) {
   const type    = String(card.back_type || 'text').toLowerCase().trim();
   const content = String(card.back_content || '');
-  const el      = document.getElementById('back-content');
   document.getElementById('back-type-badge').textContent = type;
-  if (type === 'html')     { el.innerHTML = content; }
-  else if (type === 'md') {
-    if (typeof marked !== 'undefined') {
-      el.innerHTML = marked.parse(content);
-    } else {
-      // renderer not loaded (offline, blocked): show the source, keep the card usable
-      const note = 'Markdown renderer not loaded; showing the source.';
-      el.innerHTML = '<div class="back-note">' + note + '</div>' +
-        '<div class="back-content-text">' + escHtml(content) + '</div>';
-    }
-  }
-  else { el.innerHTML = '<div class="back-content-text">' + escHtml(content) + '</div>'; }
+  document.getElementById('back-content').innerHTML = renderHtml(content, type);
 }
+
+// @render-begin
+// Card content -> HTML that is safe to inject. Types: text, md, html, svg; any
+// other type is shown as text. Needs marked (md) and DOMPurify (md, html, svg).
+// Without them the source is shown as text, so a card stays usable and nothing
+// unsanitized is ever injected. Kept apart so the sheet preview can reuse it.
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+// Scripts, event handlers, javascript: links, iframes, object/embed, meta, forms
+// and style blocks are removed; the style attribute, tables, details, media, data:
+// images and inline SVG stay. Links open in a new tab, outside this frame.
+const SANITIZE = {
+  USE_PROFILES: { html: true, svg: true, svgFilters: true },
+  FORBID_TAGS: ['style', 'form'],
+  FORBID_ATTR: ['action', 'formaction']
+};
+if (typeof DOMPurify !== 'undefined' && DOMPurify.isSupported) {
+  DOMPurify.addHook('afterSanitizeAttributes', node => {
+    if (node.nodeName.toLowerCase() === 'a' &&
+        (node.hasAttribute('href') || node.hasAttribute('xlink:href'))) {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+}
+function renderHtml(content, type) {
+  const asText = note => (note ? '<div class="back-note">' + note + '</div>' : '') +
+    '<div class="back-content-text">' + escHtml(content) + '</div>';
+  if (type !== 'md' && type !== 'html' && type !== 'svg') {
+    return asText('');
+  }
+  if (typeof DOMPurify === 'undefined' || !DOMPurify.isSupported) {
+    return asText('Sanitizer not loaded; showing the source.');
+  }
+  if (type === 'md') {
+    if (typeof marked === 'undefined') {
+      return asText('Markdown renderer not loaded; showing the source.');
+    }
+    return DOMPurify.sanitize(marked.parse(content), SANITIZE);
+  }
+  return DOMPurify.sanitize(content, SANITIZE);
+}
+// @render-end
 
 // ── Interval preview badges ────────────────────────────────────────────────
 // Normalised keyword key for exact-overlap comparison across reviews.
