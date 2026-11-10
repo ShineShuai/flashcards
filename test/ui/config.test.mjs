@@ -16,7 +16,7 @@ const defaults = (env) => ({
   await homeReady(env);
   assert.equal(env.w.eval('DESIRED_RETENTION'), 0.94);
   assert.equal(env.w.eval('MAX_INTERVAL'), 365);
-  assert.equal(env.w.eval('W.length'), 19);
+  assert.equal(env.w.eval('W.length'), 21);
 }
 
 // a valid config applies: lower retention and a cap change the intervals
@@ -46,7 +46,7 @@ const defaults = (env) => ({
     config: { w: base.w.slice(1), retention: 'high', max_interval: NaN, rejected: [] },
   });
   await homeReady(env);
-  assert.equal(env.w.eval('W.length'), 19);
+  assert.equal(env.w.eval('W.length'), 21);
   assert.equal(env.w.eval('DESIRED_RETENTION'), 0.94);
   assert.equal(env.w.eval('MAX_INTERVAL'), 365);
   // weights of the right length apply

@@ -516,7 +516,7 @@ if (isMain) {
     const { config } = plain(env.api.bootstrap());
     const keys = config.rejected.map((r) => r.key);
     assert.deepEqual(keys, ['retention', 'max_interval', 'w', 'typo_key', 'x']);
-    assert.equal(config.rejected[2].reason, 'expected 19 values');
+    assert.equal(config.rejected[2].reason, 'expected 21 values');
     assert.equal(config.rejected[4].reason, 'not valid JSON');
     assert.deepEqual(config.overridden, []);
     assert.equal(config.retention, 0.94);

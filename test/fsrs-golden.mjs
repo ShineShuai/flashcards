@@ -1,7 +1,7 @@
 // Run: node test/fsrs-golden.mjs   (no dependencies; any TZ via TZ=... env)
 // Checks the FSRS block of index.html (between @fsrs-begin/@fsrs-end) against
-// py-fsrs 5.1.0 vectors and pins the app-specific behaviour (Recap, rollover,
-// max interval).
+// py-fsrs 6.3.2 vectors (three weight sets, py-fsrs's own review_card
+// trajectories) and pins the app-specific behaviour (Recap, rollover, max interval).
 process.env.TZ ||= 'Europe/Berlin';
 
 import assert from 'node:assert/strict';
@@ -31,7 +31,8 @@ function load(patch = (s) => s) {
   }
   const ctx = vm.createContext({ Date: FakeDate, Math });
   const names = 'W initS initD nextD sRecall sForget sShort intervalDays dueDate ' +
-    'daysBetween scheduleCard nextInterval forgettingCurve LEARNING_STEPS MAX_INTERVAL';
+    'daysBetween scheduleCard nextInterval forgettingCurve curveFactor LEARNING_STEPS ' +
+    'MAX_INTERVAL';
   const api = vm.runInContext(`${patch(block)}\n({${names.split(' ').join(',')}})`, ctx);
   const at = (...args) => {
     clock.t = new FakeDate(...args).getTime();
@@ -57,45 +58,63 @@ const close = (a, b, msg) => {
 const { api, at, FakeDate } = load();
 
 // ── py-fsrs parity ──────────────────────────────────────────────────────────
-test('weights equal py-fsrs 5.1.0 defaults', () => {
-  assert.deepEqual([...api.W], golden.parameters);
+test('weights equal py-fsrs 6.3.2 defaults', () => {
+  assert.equal(golden.sets[0].name, 'default');
+  assert.deepEqual([...api.W], golden.sets[0].parameters);
+  assert.equal(api.W.length, 21);
 });
-test('initial stability / difficulty', () => {
-  for (const { g, s, d } of golden.init) {
-    close(api.initS(g), s, `initS(${g})`);
-    close(api.initD(g), d, `initD(${g})`);
-  }
-});
-test('next difficulty (linear damping, revert to D0(4))', () => {
-  for (const { d, g, v } of golden.next_d) {
-    close(api.nextD(d, g), v, `nextD(${d},${g})`);
-  }
-});
-test('recall stability', () => {
-  for (const { d, s, r, g, v } of golden.recall) {
-    close(api.sRecall(d, s, r, g), v, `sRecall(${d},${s},${r},${g})`);
-  }
-});
-test('forget stability (incl. S/e^(w17*w18) cap)', () => {
-  for (const { d, s, r, v } of golden.forget) {
-    close(api.sForget(d, s, r), v, `sForget(${d},${s},${r})`);
-  }
-});
-test('short-term stability', () => {
-  for (const { s, g, v } of golden.short) {
-    close(api.sShort(s, g), v, `sShort(${s},${g})`);
-  }
-});
-test('interval for retention 0.94 and 0.90, max 365', () => {
-  for (const [retention, rows] of Object.entries(golden.interval)) {
-    const { api: a } = load((s) =>
-      s.replace(/DESIRED_RETENTION = [\d.]+/, `DESIRED_RETENTION = ${retention}`));
-    assert.equal(a.MAX_INTERVAL, golden.max_interval);
-    for (const { s, v } of rows) {
-      assert.equal(a.intervalDays(s), v, `intervalDays(${s}) @ ${retention}`);
+
+for (const set of golden.sets) {
+  // a fresh app per weight set; weights are replaced in place
+  const withWeights = (patch) => {
+    const loaded = load(patch);
+    loaded.api.W.splice(0, loaded.api.W.length, ...set.parameters);
+    return loaded.api;
+  };
+  const a = withWeights();
+  test(`[${set.name}] initial stability / difficulty`, () => {
+    for (const { g, s, d } of set.init) {
+      close(a.initS(g), s, `initS(${g})`);
+      close(a.initD(g), d, `initD(${g})`);
     }
-  }
-});
+  });
+  test(`[${set.name}] next difficulty (linear damping, revert to D0(4))`, () => {
+    for (const { d, g, v } of set.next_d) {
+      close(a.nextD(d, g), v, `nextD(${d},${g})`);
+    }
+  });
+  test(`[${set.name}] recall stability`, () => {
+    for (const { d, s, r, g, v } of set.recall) {
+      close(a.sRecall(d, s, r, g), v, `sRecall(${d},${s},${r},${g})`);
+    }
+  });
+  test(`[${set.name}] forget stability (incl. S/e^(w17*w18) cap)`, () => {
+    for (const { d, s, r, v } of set.forget) {
+      close(a.sForget(d, s, r), v, `sForget(${d},${s},${r})`);
+    }
+  });
+  test(`[${set.name}] short-term stability (w17..w19, never lowered for Hard+)`, () => {
+    for (const { s, g, v } of set.short) {
+      close(a.sShort(s, g), v, `sShort(${s},${g})`);
+    }
+  });
+  test(`[${set.name}] forgetting curve (decay w20)`, () => {
+    for (const { s, t, v } of set.retrievability) {
+      close(a.forgettingCurve(t, s), v, `R(t=${t}, S=${s})`);
+    }
+    close(a.forgettingCurve(10, 10), 0.9, 'R(t = S) = 0.9');
+  });
+  test(`[${set.name}] interval for retention 0.94 and 0.90, max 365`, () => {
+    for (const [retention, rows] of Object.entries(set.interval)) {
+      const b = withWeights((src) =>
+        src.replace(/DESIRED_RETENTION = [\d.]+/, `DESIRED_RETENTION = ${retention}`));
+      assert.equal(b.MAX_INTERVAL, golden.max_interval);
+      for (const { s, v } of rows) {
+        assert.equal(b.intervalDays(s), v, `intervalDays(${s}) @ ${retention}`);
+      }
+    }
+  });
+}
 
 // ── scheduling behaviour ───────────────────────────────────────────────────
 function reviewAtDueDay(card, rating, streak = 0) {
@@ -108,17 +127,21 @@ function reviewAtDueDay(card, rating, streak = 0) {
   return { ...card, ...api.scheduleCard(card, rating, streak) };
 }
 
-test('Good trajectory from a new card (retention .94)', () => {
-  at(2026, 10, 6, 9, 0);
-  let card = { state: 0 };
-  const out = [];
-  card = { ...card, ...api.scheduleCard(card, 3, 0) };
-  out.push(card.scheduled_days);
-  for (let i = 0; i < 7; i++) {
-    card = reviewAtDueDay(card, 3);
-    out.push(card.scheduled_days);
+test('trajectories equal py-fsrs review_card (Easy start; Good start, 10 min/1 h)', () => {
+  for (const { ratings, intervals } of golden.trajectories) {
+    at(2026, 10, 6, 9, 0);
+    let card = { state: 0 };
+    ratings.forEach((rating, i) => {
+      card = i === 0 ? { ...card, ...api.scheduleCard(card, rating, 0) }
+                     : reviewAtDueDay(card, rating);
+      const want = intervals[i];
+      if (want < 1) {
+        close(card.scheduled_days, want, `step ${i} of ${ratings}`);
+      } else {
+        assert.equal(card.scheduled_days, want, `step ${i} of ${ratings}`);
+      }
+    });
   }
-  assert.deepEqual(out.map((x) => (x < 1 ? 'step' : x)), ['step', 3, 7, 16, 34, 69, 136, 256]);
 });
 test('MAX_INTERVAL caps scheduled_days, not stability', () => {
   at(2026, 10, 6, 9, 0);

@@ -1,7 +1,7 @@
 """Fails when test/fsrs-golden.json differs from what py-fsrs (pinned in
 gen_golden.py's docstring) generates now.
 
-    pip install fsrs==5.1.0 && python test/check_golden.py
+    pip install fsrs==6.3.2 && python test/check_golden.py
 """
 import contextlib
 import io

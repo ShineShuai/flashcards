@@ -687,17 +687,18 @@ window.addEventListener('beforeunload', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FSRS v5
+// FSRS-6
 // Ref: https://github.com/open-spaced-repetition/py-fsrs
 // ═══════════════════════════════════════════════════════════════════════════
 // @fsrs-begin
-// Default parameters (19 values, open-spaced-repetition/py-fsrs v5)
+// Default parameters (21 values, open-spaced-repetition/py-fsrs 6.3.2)
 let W = [
-  0.40255, 1.18385, 3.17300, 15.69105,   // w[0..3]  S₀ per grade
-  7.19490, 0.53450,  1.46040,  0.00460,   // w[4..7]  D₀, difficulty
-  1.54575, 0.11920,  1.01925,  1.93950,   // w[8..11] recall stability
-  0.11000, 0.29605,  2.26980,  0.23150,   // w[12..15] forget stability + hard penalty
-  2.98980, 0.51655,  0.66210              // w[16..18] easy bonus, short-term
+  0.2120, 1.2931, 2.3065, 8.2956,   // w[0..3]   S₀ per grade
+  6.4133, 0.8334, 3.0194, 0.0010,   // w[4..7]   D₀, difficulty
+  1.8722, 0.1666, 0.7960, 1.4835,   // w[8..11]  recall stability
+  0.0614, 0.2629, 1.6483, 0.6014,   // w[12..15] forget stability + hard penalty
+  1.8729, 0.5425, 0.0912, 0.0658,   // w[16..19] easy bonus, short-term
+  0.1542                            // w[20]     forgetting-curve decay
 ];
 // Intra-day steps for Learning/Relearning states (in fractional days)
 const LEARNING_STEPS = [10 / 1440, 60 / 1440]; // Again→10 min, Hard→1 h
@@ -706,26 +707,29 @@ const LEARNING_STEPS = [10 / 1440, 60 / 1440]; // Again→10 min, Hard→1 h
 let DESIRED_RETENTION = 0.94;
 let MAX_INTERVAL = 365;   // days; caps scheduled_days only, not stability
 const ROLLOVER_HOUR = 4;    // a new study day starts at 04:00 local time
-const DECAY  = -0.5;
-const FACTOR = Math.pow(0.9, 1 / DECAY) - 1;   // curve constant: R(t = S) = 0.9
 
 // Repeat-miss decay applied to Recap's interval when the same hint-revealed
 // keyword(s) recur across consecutive reviews (exact-text match). Each
 // consecutive miss multiplies the Recap interval by this factor.
 const REPEAT_MISS_DECAY = 0.7;
 
+// Forgetting curve R(t) = (1 + F * t / S) ^ -w[20]. The decay w[20] is trained per
+// user in FSRS-6; F = 0.9 ^ (-1 / w[20]) - 1 keeps R(t = S) = 0.9.
+function curveFactor() { return Math.pow(0.9, -1 / W[20]) - 1; }
 function forgettingCurve(t, s) {
   if (!s || s <= 0) return 0;
-  return Math.pow(1 + FACTOR * t / s, DECAY);
+  return Math.pow(1 + curveFactor() * t / s, -W[20]);
 }
 function clamp(x, lo, hi) { return Math.max(lo, Math.min(hi, x)); }
 function initS(g) { return Math.max(W[g - 1], 0.1); }
 function initD(g) { return clamp(W[4] - Math.exp(W[5] * (g - 1)) + 1, 1, 10); }
 function nextD(d, g) {
-  // FSRS-5: linear damping, mean reversion towards D0(Easy)
+  // Linear damping, mean reversion towards D0(Easy), which is not clamped here
+  // (with the FSRS-6 defaults it is below 1)
   const delta   = -W[6] * (g - 3);
   const damped  = d + (10 - d) * delta / 9;
-  return clamp(W[7] * initD(4) + (1 - W[7]) * damped, 1, 10);
+  const target  = W[4] - Math.exp(W[5] * 3) + 1;
+  return clamp(W[7] * target + (1 - W[7]) * damped, 1, 10);
 }
 function sRecall(d, s, r, g) {
   const hardPenalty = g === 2 ? W[15] : 1;
@@ -739,7 +743,11 @@ function sForget(d, s, r) {
   const cap = s / Math.exp(W[17] * W[18]);   // post-lapse S never exceeds this
   return Math.max(Math.min(longTerm, cap), 0.1);
 }
-function sShort(s, g) { return Math.max(s * Math.exp(W[17] * (g - 3 + W[18])), 0.1); }
+// Same-day review. Hard/Good/Easy never lower S; w[19] slows the gain at high S.
+function sShort(s, g) {
+  const gain = Math.exp(W[17] * (g - 3 + W[18])) * Math.pow(s, -W[19]);
+  return Math.max(s * (g >= 2 ? Math.max(gain, 1) : gain), 0.1);
+}
 // Study-day index in local time; the day starts at ROLLOVER_HOUR.
 function studyDay(date) {
   const shifted = new Date(date.getTime() - ROLLOVER_HOUR * 3600000);
@@ -760,7 +768,7 @@ function dueDate(now, days) {
 }
 // Stability -> whole-day interval for DESIRED_RETENTION, capped at MAX_INTERVAL.
 function intervalDays(s) {
-  const raw = (s / FACTOR) * (Math.pow(DESIRED_RETENTION, 1 / DECAY) - 1);
+  const raw = (s / curveFactor()) * (Math.pow(DESIRED_RETENTION, -1 / W[20]) - 1);
   return clamp(Math.round(raw), 1, MAX_INTERVAL);
 }
 // Interval preview for the rating buttons; same code path as the real schedule.

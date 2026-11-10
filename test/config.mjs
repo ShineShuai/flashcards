@@ -36,7 +36,12 @@ test('DEFAULTS equal the FSRS block of index.html', () => {
 });
 
 test('DEFAULTS.w equals the py-fsrs defaults of the golden vectors', () => {
-  assert.deepEqual(plain(cfg.DEFAULTS.w), golden.parameters);
+  assert.deepEqual(plain(cfg.DEFAULTS.w), golden.sets[0].parameters);
+});
+
+test('LIMITS.w equal the py-fsrs parameter bounds', () => {
+  assert.deepEqual(plain(cfg.LIMITS.w_lo), golden.bounds.lo);
+  assert.deepEqual(plain(cfg.LIMITS.w_hi), golden.bounds.hi);
 });
 
 test('DEFAULTS pass their own validation', () => {

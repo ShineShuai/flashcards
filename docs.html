@@ -353,7 +353,7 @@ td code { font-size: .82rem; }
   <a class="nav-link" href="#rating">Rating & FSRS</a>
 
   <div class="nav-section">Algorithm</div>
-  <a class="nav-link" href="#fsrs">FSRS v5</a>
+  <a class="nav-link" href="#fsrs">FSRS-6</a>
   <a class="nav-link" href="#states">Card States</a>
 
   <div class="nav-section">Troubleshooting</div>
@@ -371,7 +371,7 @@ td code { font-size: .82rem; }
     No server, no install — one URL works on desktop and mobile.
   </p>
   <div class="badge-row">
-    <span class="badge b-purple">FSRS v5</span>
+    <span class="badge b-purple">FSRS-6</span>
     <span class="badge b-blue">Google Apps Script</span>
     <span class="badge b-mint">Google Sheets DB</span>
     <!--span class="badge b-amber">CJK Support (JP/KR/SC)</span-->
@@ -408,7 +408,7 @@ td code { font-size: .82rem; }
     <div class="arch-box-title">index.html</div>
     <div class="arch-box-items">
       SPA frontend<br>
-      FSRS v5 in JS<br>
+      FSRS-6 in JS<br>
       Title + keyword reveal<br>
       Spell check<br>
       Dark / Light mode
@@ -431,7 +431,7 @@ td code { font-size: .82rem; }
   &nbsp;&nbsp;<span class="file">Code.gs</span>
     <span class="note">← GAS backend: sheet R/W, doGet, FSRS field write-back</span><br>
   &nbsp;&nbsp;<span class="file">index.html</span>
-    <span class="note">← Full SPA: FSRS v5 JS, UI, card flip, keyword reveal</span>
+    <span class="note">← Full SPA: FSRS-6 JS, UI, card flip, keyword reveal</span>
 </div>
 
 <table>
@@ -444,7 +444,7 @@ td code { font-size: .82rem; }
     </tr>
     <tr>
       <td><code>index.html</code></td>
-      <td>Entire frontend in one file. Contains CSS, HTML, and FSRS v5 JavaScript.</td>
+      <td>Entire frontend in one file. Contains CSS, HTML, and FSRS-6 JavaScript.</td>
       <td>To tweak UI, colors, or FSRS W parameters</td>
     </tr>
   </tbody>
@@ -793,13 +793,13 @@ Blooms ~2 weeks, late March to early April.</pre>
 
 <p><strong>Recap</strong> sits between Again and Hard. Difficulty is updated as for Hard, but <em>stability never grows</em> and the interval never exceeds the card's previous interval. If the same keywords needed a hint in consecutive reviews (case-insensitive match), stability, and so the interval, is multiplied by 0.7 for each consecutive repeat. It is for "I recognized this, but not confidently, and Hard's growing interval still feels too aggressive." Recap only behaves this way from Review state; from New/Learning/Relearning (no prior interval to cap against) it falls back to Hard's own scheduling. The Recap preview is recomputed when you flip, so it reflects the hints you used.</p>
 
-<p>Intervals are computed by FSRS v5 before you rate, so you can see the consequence of each choice before clicking. Actual values depend on the card's history.</p>
+<p>Intervals are computed by FSRS-6 before you rate, so you can see the consequence of each choice before clicking. Actual values depend on the card's history.</p>
 
 <!-- ── FSRS ────────────────────────────────────────────────────────────── -->
-<h2 id="fsrs">FSRS v5 Algorithm</h2>
+<h2 id="fsrs">FSRS-6 Algorithm</h2>
 
 <p>
-  <a href="https://github.com/open-spaced-repetition/py-fsrs" target="_blank">FSRS v5</a>
+  <a href="https://github.com/open-spaced-repetition/py-fsrs" target="_blank">FSRS-6</a>
   (Free Spaced Repetition Scheduler) is the algorithm used by Anki since 2023.
   It models memory using three variables:
 </p>
@@ -814,15 +814,15 @@ Blooms ~2 weeks, late March to early April.</pre>
 </table>
 
 <p><strong>Forgetting curve:</strong></p>
-<pre>R(t, S) = (1 + 0.2346 × t / S)<sup>−0.5</sup></pre>
+<pre>R(t, S) = (1 + F × t / S)<sup>−w20</sup>,  F = 0.9<sup>−1/w20</sup> − 1</pre>
 
-<p>At t = S days, R = 0.90 — that's the 90% retention target baked into the constants.</p>
+<p>At t = S days, R = 0.90 for any w20 — that's the 90% retention target baked into F. The decay w20 is one of the 21 weights (default 0.1542, F = 0.9803).</p>
 
-<p>The W parameters (19 values) are the unmodified defaults of py-fsrs 5.1.0; difficulty update (linear damping, reversion to D0(Easy)) and post-lapse stability cap follow the same reference. To personalize them, run <a href="https://github.com/open-spaced-repetition/fsrs-optimizer" target="_blank">fsrs-optimizer</a> on your review log and replace the <code>W</code> array at the top of the <code>&lt;script&gt;</code> block in <code>index.html</code>.</p>
+<p>The W parameters (21 values) are the unmodified defaults of py-fsrs 6.3.2; the difficulty update (linear damping, reversion to the unclamped D0(Easy)), the post-lapse stability cap and the same-day rule (Hard, Good and Easy never lower stability; w19 slows the gain at high stability) follow the same reference. To personalize them, run <a href="https://github.com/open-spaced-repetition/fsrs-optimizer" target="_blank">fsrs-optimizer</a> on your review log and put the 21 values into the <code>w</code> row of the settings tab.</p>
 
 <h3>Desired retention and maximum interval</h3>
 <p>The interval is the number of days until predicted recall falls to the desired retention (default 0.94). Raise it for shorter intervals and more reviews; lower it for the opposite. The maximum interval (default 365 days) caps the scheduled interval only; stability keeps growing. The curve constant (R = 90% at t = S) is independent of the desired retention.</p>
-<p><strong>Settings.</strong> The defaults are in <code>Config.gs</code>. To change them for your own sheet, add rows to the <strong>settings</strong> tab (created by <code>setupSheet()</code>): column <code>key</code> and column <code>value</code> as JSON text. <code>retention</code> takes 0.80 to 0.97, <code>max_interval</code> a whole number of days from 30 to 3650, and <code>w</code> an array of 19 weights, for example one fitted by an optimizer. A blank value means the default. A row with a value that is not valid, out of range or of the wrong length is ignored. Changes apply the next time Home loads, and only to future reviews; stored intervals stay. Every change of <code>w</code> made through the app is also appended to the <strong>weights_history</strong> tab.</p>
+<p><strong>Settings.</strong> The defaults are in <code>Config.gs</code>. To change them for your own sheet, add rows to the <strong>settings</strong> tab (created by <code>setupSheet()</code>): column <code>key</code> and column <code>value</code> as JSON text. <code>retention</code> takes 0.80 to 0.97, <code>max_interval</code> a whole number of days from 30 to 3650, and <code>w</code> an array of 21 weights, for example one fitted by an optimizer. A <code>w</code> row with the 19 weights of the earlier FSRS-5 version is ignored; appending <code>0.0, 0.5</code> to those 19 values gives back the FSRS-5 curve, except that same-day Hard, Good and Easy reviews no longer lower stability. A blank value means the default. A row with a value that is not valid, out of range or of the wrong length is ignored. Changes apply the next time Home loads, and only to future reviews; stored intervals stay. Every change of <code>w</code> made through the app is also appended to the <strong>weights_history</strong> tab.</p>
 
 <h3>Overdue cap</h3>
 <p>Elapsed time is counted in study days (day boundary 04:00 local). If a card is reviewed much later than scheduled, the elapsed days used for retrievability is capped at <strong>2× the scheduled interval</strong>. This prevents extreme overdue cards from producing unrealistically inflated stability after a correct answer.</p>

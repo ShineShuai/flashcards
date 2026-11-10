@@ -5,25 +5,25 @@
 // index.html: test/config.mjs checks it.
 
 const DEFAULTS = {
-  // FSRS v5, py-fsrs 5.1.0 defaults
+  // FSRS-6, py-fsrs 6.3.2 defaults
   w: [
-    0.40255, 1.18385, 3.17300, 15.69105, 7.19490, 0.53450, 1.46040, 0.00460,
-    1.54575, 0.11920, 1.01925, 1.93950, 0.11000, 0.29605, 2.26980, 0.23150,
-    2.98980, 0.51655, 0.66210
+    0.2120, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.0010,
+    1.8722, 0.1666, 0.7960, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014,
+    1.8729, 0.5425, 0.0912, 0.0658, 0.1542
   ],
   retention: 0.94,      // interval = days until predicted recall falls to this
   max_interval: 365     // days; caps the scheduled interval only
 };
 
-// What an override may hold. The w bounds are the clips of the py-fsrs 5.1.0
-// optimizer, so any fitted weights pass.
+// What an override may hold. The w bounds are py-fsrs 6.3.2's parameter bounds
+// (also the optimizer's clips), so any fitted weights pass.
 const LIMITS = {
   retention: [0.80, 0.97],
   max_interval: [30, 3650],
-  w_lo: [0.01, 0.01, 0.01, 0.01, 1.0, 0.1, 0.1, 0.0, 0.0, 0.0,
-         0.01, 0.1, 0.01, 0.01, 0.01, 0.0, 1.0, 0.0, 0.0],
-  w_hi: [100, 100, 100, 100, 10.0, 4.0, 4.0, 0.75, 4.5, 0.8,
-         3.5, 5.0, 0.25, 0.9, 4.0, 1.0, 6.0, 2.0, 2.0]
+  w_lo: [0.001, 0.001, 0.001, 0.001, 1.0, 0.001, 0.001, 0.001, 0.0, 0.0, 0.001,
+         0.001, 0.001, 0.001, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.1],
+  w_hi: [100, 100, 100, 100, 10.0, 4.0, 4.0, 0.75, 4.5, 0.8, 3.5,
+         5.0, 0.25, 0.9, 4.0, 1.0, 6.0, 2.0, 2.0, 0.8, 0.8]
 };
 
 // '' when the override is valid, otherwise the reason it is ignored.
