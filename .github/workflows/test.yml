@@ -36,6 +36,7 @@ jobs:
       - run: node test/code.mjs
       - run: node test/config.mjs
       - run: node test/highlight.mjs
+      - run: node test/version.mjs
       - run: node test/contrast.mjs
 
   # index.html in jsdom with a stubbed google.script.run

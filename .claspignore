@@ -2,6 +2,7 @@
 **/**
 !Code.gs
 !Config.gs
+!Version.gs
 !Highlight.gs
 !Preview.gs
 !Sidebar.html

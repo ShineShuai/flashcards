@@ -346,6 +346,7 @@ td code { font-size: .82rem; }
   <a class="nav-link" href="#back-types">Back Card Types</a>
   <a class="nav-link" href="#drive-images">Drive Images</a>
   <a class="nav-link" href="#sheet-tools">Sheet Tools</a>
+  <a class="nav-link" href="#updates">Versions & Updates</a>
 
   <div class="nav-section">Using the App</div>
   <a class="nav-link" href="#session">Review Session</a>
@@ -433,6 +434,8 @@ td code { font-size: .82rem; }
     <span class="note">← GAS backend: sheet R/W, doGet, FSRS field write-back</span><br>
   &nbsp;&nbsp;<span class="file">Config.gs</span>
     <span class="note">← default FSRS weights, retention, max interval</span><br>
+  &nbsp;&nbsp;<span class="file">Version.gs</span>
+    <span class="note">← the deployed version (stamped automatically)</span><br>
   &nbsp;&nbsp;<span class="file">Highlight.gs</span>
     <span class="note">← Flash menu: syntax highlight, back_type sniffing, SVG thumbnails</span><br>
   &nbsp;&nbsp;<span class="file">Preview.gs</span> + <span class="file">Sidebar.html</span>
@@ -455,6 +458,11 @@ td code { font-size: .82rem; }
       <td><code>Config.gs</code></td>
       <td>The general defaults: 21 FSRS weights, desired retention, maximum interval.</td>
       <td>No — override per sheet in the <strong>settings</strong> tab instead</td>
+    </tr>
+    <tr>
+      <td><code>Version.gs</code></td>
+      <td>The deployed version, written by <code>tools/bump-version.mjs</code>. The app compares it with its own to update itself.</td>
+      <td>No — see Versions &amp; Updates</td>
     </tr>
     <tr>
       <td><code>Highlight.gs</code>, <code>Preview.gs</code>, <code>Sidebar.html</code></td>
@@ -508,7 +516,7 @@ td code { font-size: .82rem; }
     <div class="step-num">2</div>
     <div class="step-body">
       <h4>Paste the script files</h4>
-      <p>Click the default file (usually <em>Code.gs</em>). Delete everything and paste the full contents of <code>Code.gs</code>. Then add <strong>+ (New file) → Script</strong> for each of <code>Config</code>, <code>Highlight</code> and <code>Preview</code> (GAS adds .gs) and paste the matching file.</p>
+      <p>Click the default file (usually <em>Code.gs</em>). Delete everything and paste the full contents of <code>Code.gs</code>. Then add <strong>+ (New file) → Script</strong> for each of <code>Config</code>, <code>Version</code>, <code>Highlight</code> and <code>Preview</code> (GAS adds .gs) and paste the matching file.</p>
     </div>
   </li>
   <li class="step">
@@ -724,6 +732,12 @@ Blooms ~2 weeks, late March to early April.</pre>
   <li><strong>Check sheet tools.</strong> Writes a sheet <code>_flash_check</code> to confirm on your account that styling after an emoji lands on the right text (B1) and that <code>IMAGE</code> shows a data URI (A2 should show a pink circle). Delete the sheet afterwards.</li>
 </ul>
 <p>A spreadsheet cell can not show HTML, so the cell shows colored source and the preview shows the result. The colors suit a white sheet (contrast at least 4.5:1).</p>
+
+<h2 id="updates">Versions &amp; Updates</h2>
+
+<p>The version, for example <code>v2026.11.10.1</code> (date and counter), is shown at the bottom of Home. It is stamped automatically: the <code>bump-version</code> pre-commit hook runs <code>tools/bump-version.mjs</code>, which hashes the deployed files and, when they changed, writes a new version to <code>Version.gs</code> and to the <code>APP_VERSION</code> line of <code>index.html</code>. CI fails when the stamp is out of date. If you paste the files into Apps Script by hand, run the script first.</p>
+<p>The app asks the server for its version when Home opens, when you return to the tab (at most once a minute) and every 10 minutes. When a different version is deployed, the app reloads itself as soon as it is idle: on Home, with nothing waiting to be saved. During a review a bar at the bottom says <em>New version … is ready</em> with a <strong>Reload</strong> button, and the update is applied when you are back on Home. Ratings that are not saved yet stay in the browser and are sent after the reload.</p>
+<p>The app is shown inside a frame of the Apps Script page, so the reload has to navigate the whole page. Some browsers block that without a tap; then the bar appears and the button does it. The automatic reload is tried once per version, so a broken deployment can not cause a reload loop.</p>
 
 <h2 id="session">Review Session</h2>
 

@@ -1,0 +1,12 @@
+# pip install pre-commit && pre-commit install
+# The hook rewrites Version.gs and index.html when a deployed file changed, so the
+# first commit stops ("files were modified"): git add the two files and commit again.
+repos:
+  - repo: local
+    hooks:
+      - id: bump-version
+        name: stamp the app version when the deployed files change
+        entry: node tools/bump-version.mjs
+        language: system
+        pass_filenames: false
+        files: ^(Code|Config|Version|Highlight|Preview)\.gs$|^(index|docs|Sidebar)\.html$|^appsscript\.json$

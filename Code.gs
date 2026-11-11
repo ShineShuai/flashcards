@@ -60,6 +60,11 @@ function getDocsUrl() {
   return getAppUrl() + '?page=docs';   // works for /exec and /dev
 }
 
+// The deployed version (Version.gs); the app reloads itself when it differs from its own.
+function getVersion() {
+  return { version: APP_VERSION, url: getAppUrl() };
+}
+
 function getDocsHtml() {
   return HtmlService.createHtmlOutputFromFile('docs').getContent();
 }

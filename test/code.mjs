@@ -14,7 +14,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
   // Apps Script shares one global scope across files
   const root = path.dirname(file);
-  const code = ['Config.gs', 'Highlight.gs', 'Preview.gs'].map((f) => path.join(root, f))
+  const code = ['Version.gs', 'Config.gs', 'Highlight.gs', 'Preview.gs']
+    .map((f) => path.join(root, f))
     .concat(file).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
   const stats = { calls: {}, locks: 0, failAppend: false };
   const bump = (name) => {
@@ -336,7 +337,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
   });
   const api = vm.runInContext(
     `${code}\n({ getDueCards, getStats, updateCard, setupSheet, getDocsUrl, HEADERS, DEFAULTS,` +
-    ` saveSettings, onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
+    ` saveSettings, getVersion, APP_VERSION, onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
     ` tokenize_, sniffType_, thumbFormula_, appShell_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
@@ -900,6 +901,16 @@ if (isMain) {
     assert.match(sheet.get(2, 1).formula, /^=IMAGE\("data:image\/svg\+xml;base64,/);
     env.api.checkSheetTools();                        // can be run again
     assert.match(sheet.get(1, 2), /^ok:/);
+  });
+
+  test('getVersion reports the stamped version and the web app URL', () => {
+    const env = loadCodeGs();
+    env.ctx.__url = 'https://script.google.com/macros/s/ID/exec';
+    const stamped = fs.readFileSync(path.join(here, '..', 'Version.gs'), 'utf8')
+      .match(/APP_VERSION = '([^']*)'/)[1];
+    assert.deepEqual(plain(env.api.getVersion()),
+      { version: stamped, url: 'https://script.google.com/macros/s/ID/exec' });
+    assert.equal(env.api.APP_VERSION, stamped);
   });
 
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {

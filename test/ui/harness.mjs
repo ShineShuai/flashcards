@@ -36,18 +36,29 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 // options: cards, storage (initial localStorage), dark (system theme), blockStorage,
 //          docsFail, failDue (getDueCards fails), config (sent with bootstrap),
 //          realMarkdown (real marked instead of an identity stub), noSanitizer,
+//          versionServer { version, url, fail } (getVersion; default: the page's own version),
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
-          server = {} } = options;
+          versionServer = {}, server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], ...server };
+  const own = html.match(/^const APP_VERSION = '([^']*)';/m)[1];
+  const ver = { version: own, url: 'https://script.google.test/macros/s/ID/exec', fail: false,
+                calls: 0, ...versionServer };   // calls: kept out of ev, which orders saves
   const dom = new JSDOM(html, {
     runScripts: 'dangerously',
     url: 'https://example.test/',
     pretendToBeVisual: true,
     beforeParse(w) {
+      // A page interval (the version check) must not keep the test process alive
+      w.setInterval = (fn, ms, ...rest) => {
+        const timer = setInterval(fn, ms, ...rest);
+        timer.unref();
+        return timer;
+      };
+      w.clearInterval = (timer) => clearInterval(timer);
       w.marked = realMarkdown ? realMarked : { parse: (x) => x };
       if (!noSanitizer) {
         w.DOMPurify = createDOMPurify(w);               // the real one, bound to this window
@@ -101,6 +112,13 @@ export function boot(options = {}) {
             srv.saved.push({ id: args[0], fsrs: args[1], meta: args[2] });
             ok(srv.reply);
           }, srv.delay);
+        } else if (fn === 'getVersion') {
+          ver.calls++;
+          if (ver.fail) {
+            bad({ message: 'offline' });
+          } else {
+            ok({ version: ver.version, url: ver.url });
+          }
         } else if (fn === 'getDocsHtml') {
           if (docsFail) {
             bad({ message: 'nope' });
@@ -115,7 +133,7 @@ export function boot(options = {}) {
   const w = dom.window;
   const $ = (id) => w.document.getElementById(id);
   return {
-    w, ev, srv, $,
+    w, ev, srv, ver, $,
     saved: srv.saved,
     txt: (id) => $(id).textContent,
     shown: (id) => !$(id).classList.contains('hidden'),

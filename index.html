@@ -172,6 +172,13 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
               letter-spacing: .08em; color: var(--text2); }
 .home-title { font-size: 1.3rem; font-weight: 900; margin-bottom: 4px; }
 .home-sub   { color: var(--text2); font-size: .85rem; margin-bottom: 20px; }
+.home-version { color: var(--text2); font-size: .72rem; text-align: center; margin-top: 14px; }
+#update-banner {
+  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 60;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; border-radius: 14px; font-size: .85rem; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
+}
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 13px 24px; border: none; border-radius: 100px;
@@ -521,6 +528,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     <button class="btn btn-primary btn-block" id="startBtn" onclick="startSession()">
       ▶&nbsp; Start Review
     </button>
+    <div class="home-version" id="app-version"></div>
   </div>
 </div>
 
@@ -636,6 +644,11 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
       ↩ Home<kbd class="k">Enter</kbd>
     </button>
   </div>
+</div>
+
+<div id="update-banner" class="hidden" role="status">
+  <span>New version <strong id="update-version"></strong> is ready.</span>
+  <button class="btn btn-primary" id="update-btn" onclick="reloadApp()">Reload</button>
 </div>
 
 <div id="docs-modal" class="hidden" role="dialog" aria-modal="true" aria-label="Documentation">
@@ -1116,6 +1129,11 @@ function fetchHome() {
       btn.textContent = stats.due > 0 ? `▶  Start Review (${stats.due})` : '✓  Nothing due';
       btn.disabled    = stats.due === 0;
       show('s-home');
+      if (newerVersion) {
+        updateIfIdle();            // a newer deployment was seen during the session
+      } else {
+        maybeCheckVersion();
+      }
     })
     .withFailureHandler(err => { alert('Error: ' + err.message); show('s-home'); })
     .bootstrap();
@@ -1796,8 +1814,90 @@ function updateProgress() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Version and updates
+// ═══════════════════════════════════════════════════════════════════════════
+// APP_VERSION is stamped by tools/bump-version.mjs (pre-commit) together with
+// Version.gs, which the server reports. A difference means a newer deployment is
+// live. This page sits in a frame that keeps the old code until the top window
+// loads the web app again, so an update navigates the top window. That can be
+// blocked without a tap: after an automatic try the banner offers a Reload button.
+const APP_VERSION = '2026.11.11.1';
+const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
+const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
+const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
+let updateBannerDelayMs = 1500;
+let newerVersion     = '';
+let execUrl          = '';
+let versionCheckedAt = 0;
+
+function checkVersion() {
+  versionCheckedAt = Date.now();
+  google.script.run
+    .withSuccessHandler(noteServerVersion)
+    .withFailureHandler(() => {})                  // offline: the next check will do
+    .getVersion();
+}
+function maybeCheckVersion() {
+  if (!document.hidden && Date.now() - versionCheckedAt > VERSION_CHECK_MIN_MS) {
+    checkVersion();
+  }
+}
+function noteServerVersion(res) {
+  if (!res || !res.version) {
+    return;
+  }
+  if (res.url) {
+    execUrl = res.url;
+  }
+  if (res.version === APP_VERSION) {
+    newerVersion = '';
+    storageSet(UPDATE_TRY_KEY, '');
+    return;
+  }
+  newerVersion = res.version;
+  updateIfIdle();
+}
+// Idle: on Home, nothing waiting to be saved, no dialog open.
+function appIdle() {
+  return isShown('s-home') && !saveBusy && saveQueue.length === 0 && !isShown('docs-modal');
+}
+function updateIfIdle() {
+  if (!newerVersion) {
+    return;
+  }
+  if (appIdle() && storageGet(UPDATE_TRY_KEY) !== newerVersion) {
+    storageSet(UPDATE_TRY_KEY, newerVersion);
+    reloadApp();
+    setTimeout(showUpdateBanner, updateBannerDelayMs);   // still here: navigation was blocked
+  } else {
+    showUpdateBanner();
+  }
+}
+function showUpdateBanner() {
+  document.getElementById('update-version').textContent = newerVersion;
+  document.getElementById('update-banner').classList.remove('hidden');
+}
+function reloadApp() {
+  if (execUrl) {
+    navigateTop(execUrl);
+  } else {
+    window.location.reload();
+  }
+}
+function navigateTop(url) {
+  try {
+    window.top.location.replace(url);
+  } catch (e) {
+    window.location.reload();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Init
 // ═══════════════════════════════════════════════════════════════════════════
+document.getElementById('app-version').textContent = 'v' + APP_VERSION;
+document.addEventListener('visibilitychange', maybeCheckVersion);
+setInterval(maybeCheckVersion, VERSION_CHECK_EVERY_MS);
 initTheme();
 saveQueue = loadPendingSaves();   // ratings not confirmed before the last close
 window.addEventListener('beforeunload', e => {
