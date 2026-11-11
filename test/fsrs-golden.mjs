@@ -1,5 +1,6 @@
 // Run: node test/fsrs-golden.mjs   (no dependencies; any TZ via TZ=... env)
-// Checks the FSRS block of index.html (between @fsrs-begin/@fsrs-end) against
+// Checks the FSRS and replay blocks of index.html (@fsrs-begin/@fsrs-end,
+// @replay-begin/@replay-end) against
 // py-fsrs 6.3.2 vectors (three weight sets, py-fsrs's own review_card
 // trajectories) and pins the app-specific behaviour (Recap, rollover, max interval).
 process.env.TZ ||= 'Europe/Berlin';
@@ -16,6 +17,7 @@ const golden = JSON.parse(fs.readFileSync(path.join(here, 'fsrs-golden.json'), '
 
 function load(patch = (s) => s) {
   const block = html.match(/\/\/ @fsrs-begin([\s\S]*?)\/\/ @fsrs-end/)[1];
+  const replay = html.match(/\/\/ @replay-begin([\s\S]*?)\/\/ @replay-end/)[1];
   const clock = { t: Date.now() };
   class FakeDate extends Date {
     constructor(...args) {
@@ -32,8 +34,9 @@ function load(patch = (s) => s) {
   const ctx = vm.createContext({ Date: FakeDate, Math });
   const names = 'W initS initD nextD sRecall sForget sShort intervalDays dueDate ' +
     'daysBetween scheduleCard nextInterval forgettingCurve curveFactor LEARNING_STEPS ' +
-    'MAX_INTERVAL';
-  const api = vm.runInContext(`${patch(block)}\n({${names.split(' ').join(',')}})`, ctx);
+    'MAX_INTERVAL parseReviewLog holdoutCut replayLoss isScored';
+  const api = vm.runInContext(
+    `${patch(block)}\n${replay}\n({${names.split(' ').join(',')}})`, ctx);
   const at = (...args) => {
     clock.t = new FakeDate(...args).getTime();
   };
@@ -126,6 +129,88 @@ function reviewAtDueDay(card, rating, streak = 0) {
   at(due.getTime());
   return { ...card, ...api.scheduleCard(card, rating, streak) };
 }
+
+// ── review-log replay (weights screen) ──────────────────────────────────────
+// The sheet's review_log in the shape getReviewLog() returns, from the golden rows.
+const LOG_COLUMNS = ['review_time', 'card_id', 'rating', 'state_before', 'elapsed_days',
+  'scheduled_days', 'stability', 'difficulty', 'hints', 'keywords', 'duration_ms'];
+const toSheet = (rows) => ({
+  columns: LOG_COLUMNS,
+  rows: rows.map(([t, card, rating, state, elapsed, s, d]) =>
+    [new Date(t).toISOString(), card, rating, state, elapsed, 1, s, d, 0, 0, 0]),
+});
+const replayRows = (rows = golden.replay.rows) => api.parseReviewLog(toSheet(rows));
+const sameMetrics = (got, want, label) => {
+  assert.equal(got.n, want.n, `${label} n`);
+  for (const k of ['logloss', 'meanR', 'recall']) {
+    close(got[k], want[k], `${label} ${k}`);
+  }
+};
+
+for (const set of golden.sets) {
+  test(`[${set.name}] replay loss equals the py-fsrs reference (all and held out)`, () => {
+    const rows = replayRows();
+    const res = golden.replay.results[set.name];
+    sameMetrics(api.replayLoss(rows, set.parameters, -1), res.all, 'all');
+    sameMetrics(api.replayLoss(rows, set.parameters, golden.replay.holdout_cut), res.held_out,
+      'held out');
+  });
+}
+
+test('replay: the hold-out cut equals the reference; a fifth of the scored rows follow', () => {
+  const rows = replayRows();
+  assert.equal(api.holdoutCut(rows), golden.replay.holdout_cut);
+  const held = api.replayLoss(rows, [...api.W], golden.replay.holdout_cut).n;
+  const all = api.replayLoss(rows, [...api.W], -1).n;
+  assert.ok(held > 0.15 * all && held < 0.25 * all, `${held} of ${all}`);
+});
+
+test('replay: input order does not matter; weights are restored; bad rows are skipped', () => {
+  const before = [...api.W];
+  const rows = golden.replay.rows;
+  const shuffled = [...rows].sort((a, b) => ((a[1] + a[0]) > (b[1] + b[0]) ? 1 : -1));
+  const w = golden.sets[2].parameters;
+  sameMetrics(api.replayLoss(replayRows(shuffled), w, -1),
+    api.replayLoss(replayRows(rows), w, -1), 'shuffled');
+  assert.deepEqual([...api.W], before, 'W restored');
+  const dirty = toSheet(rows);
+  const when = dirty.rows[0][0];
+  dirty.rows.push(['not a date', 'x', 3, 2, 5, 1, 9, 5, 0, 0, 0],
+    [when, 'x', 0, 2, 5, 1, 9, 5, 0, 0, 0], [when, 'x', 5, 2, 5, 1, 9, 5, 0, 0, 0]);
+  assert.equal(api.parseReviewLog(dirty).length, rows.length);
+});
+
+test('replay: an empty log, and a log without scored reviews', () => {
+  const none = api.replayLoss([], [...api.W], -1);
+  assert.equal(none.n, 0);
+  assert.ok(Number.isNaN(none.logloss));
+  const learning = replayRows(golden.replay.rows.filter((r) => r[3] !== 2));
+  assert.equal(api.holdoutCut(learning), Infinity);
+  assert.equal(api.replayLoss(learning, [...api.W], -1).n, 0);
+});
+
+test('replay: longer stability scores better here; Again is the only forgotten rating', () => {
+  // one card: New Good, Learning Good, then six reviews 10 days apart, all recalled
+  const log = [];
+  let t = Date.UTC(2026, 0, 1);
+  log.push([t, 'c', 3, 0, 0, 1, 1]);
+  t += 3_600_000;
+  log.push([t, 'c', 3, 1, 0, 1, 1]);
+  for (let i = 0; i < 6; i++) {
+    t += 10 * 86_400_000;
+    log.push([t, 'c', i === 5 ? 1.5 : 3, 2, 10, 1, 1]);
+  }
+  const base = golden.sets[0].parameters;
+  const forgetful = api.replayLoss(replayRows(log), base, -1);
+  const sticky = base.slice();
+  sticky[1] = 20;
+  sticky[2] = 20;                                     // far longer initial stability
+  assert.equal(forgetful.n, 6);
+  assert.equal(forgetful.recall, 1, 'Recap counts as recalled');
+  assert.ok(api.replayLoss(replayRows(log), sticky, -1).logloss < forgetful.logloss);
+  log[4][2] = 1;                                      // one Again among the reviews
+  close(api.replayLoss(replayRows(log), base, -1).recall, 5 / 6, 'recall with one Again');
+});
 
 test('trajectories equal py-fsrs review_card (Easy start; Good start, 10 min/1 h)', () => {
   for (const { ratings, intervals } of golden.trajectories) {

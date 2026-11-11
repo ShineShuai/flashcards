@@ -37,13 +37,16 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 //          docsFail, failDue (getDueCards fails), config (sent with bootstrap),
 //          realMarkdown (real marked instead of an identity stub), noSanitizer,
 //          versionServer { version, url, fail } (getVersion; default: the page's own version),
+//          reviewLog { columns, rows }, weightsHistory [..], saveSettings (patch, meta) => reply
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
-          versionServer = {}, server = {} } = options;
+          versionServer = {}, reviewLog, weightsHistory = [], saveSettings,
+          server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
-  const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], ...server };
+  const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], settingsCalls: [],
+                ...server };
   const own = html.match(/^const APP_VERSION = '([^']*)';/m)[1];
   const ver = { version: own, url: 'https://script.google.test/macros/s/ID/exec', fail: false,
                 calls: 0, ...versionServer };   // calls: kept out of ev, which orders saves
@@ -112,6 +115,22 @@ export function boot(options = {}) {
             srv.saved.push({ id: args[0], fsrs: args[1], meta: args[2] });
             ok(srv.reply);
           }, srv.delay);
+        } else if (fn === 'getReviewLog') {
+          if (reviewLog instanceof Error) {
+            bad({ message: reviewLog.message });
+          } else {
+            ok(reviewLog || { columns: ['review_time'], rows: [] });
+          }
+        } else if (fn === 'getWeightsHistory') {
+          ok(weightsHistory.map((h) => ({ ...h })));
+        } else if (fn === 'saveSettings') {
+          srv.settingsCalls.push({ patch: args[0], meta: args[1] });
+          const reply = saveSettings ? saveSettings(args[0], args[1]) : { ok: true, config: {} };
+          if (reply instanceof Error) {
+            bad({ message: reply.message });
+          } else {
+            ok(reply);
+          }
         } else if (fn === 'getVersion') {
           ver.calls++;
           if (ver.fail) {

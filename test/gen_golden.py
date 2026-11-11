@@ -4,6 +4,7 @@
     .venv/bin/python test/gen_golden.py > test/fsrs-golden.json
 """
 import json
+import random
 from datetime import datetime, timedelta, timezone
 from itertools import product
 
@@ -126,12 +127,135 @@ def trajectory(ratings, steps, retention=0.94):
     return {"ratings": ratings, "retention": retention, "intervals": out}
 
 
+# ── review-log replay (weights screen) ──
+# A synthetic log in the sheet's terms: Review-state reviews after >= 1 day are scored,
+# Again = forgotten, the rest (Recap included) = recalled. Mirrors replayLoss in index.html.
+DAY_MS = 86_400_000
+EVAL_SHARE = 0.2
+
+
+def synthetic_log():
+    rnd = random.Random(7)
+    rows = []
+    for c in range(48):
+        t = 1_760_000_000_000 + int(rnd.random() * 20) * DAY_MS
+        card = f"card{c}"
+        seq = []                                     # (rating, state_before, elapsed_days)
+        if c % 6 != 5:                               # every 6th card: log starts mid-life
+            seq.append(([2, 3, 3, 4][int(rnd.random() * 4)], 0, 0))
+            seq.append(([3, 4][int(rnd.random() * 2)], 1, 0))
+        n = 8 + int(rnd.random() * 7)
+        while len(seq) < n:
+            u = rnd.random()
+            elapsed = 1 + int(rnd.random() * rnd.random() * 60)
+            if u < 0.05:
+                seq.append((1, 2, elapsed))
+                seq.append((3, 3, 0))                # relearning, same day
+            elif u < 0.08:
+                seq.append((3, 2, 0))                # Review state, same day: not scored
+            elif u < 0.10:
+                seq.append((1.5, 2, elapsed))
+            elif u < 0.28:
+                seq.append((2, 2, elapsed))
+            elif u < 0.85:
+                seq.append((3, 2, elapsed))
+            else:
+                seq.append((4, 2, elapsed))
+        for rating, state, elapsed in seq:
+            t += elapsed * DAY_MS if elapsed else 3_600_000
+            stability = round(3 + rnd.random() * 40, 4)
+            difficulty = round(2 + rnd.random() * 7, 4)
+            rows.append([t, card, rating, state, elapsed, stability, difficulty])
+    return rows
+
+
+def is_scored(row):
+    return row[3] == 2 and row[4] >= 1
+
+
+def holdout_cut(rows):
+    scored = [r for r in sorted(rows, key=lambda r: r[0]) if is_scored(r)]
+    return scored[max(0, int(len(scored) * (1 - EVAL_SHARE)) - 1)][0]
+
+
+def replay(rows, params, since_ms):
+    import math
+
+    ref = Scheduler(parameters=params, enable_fuzzing=False)
+    clamp = lambda x, lo, hi: min(max(x, lo), hi)
+    curve = lambda t, s: (1 + ref._FACTOR * t / s) ** ref._DECAY
+    cards = {}
+    n, loss, sum_r, recalled = 0, 0.0, 0.0, 0
+    ordered = [r for _, r in sorted(enumerate(rows), key=lambda e: (e[1][0], e[0]))]
+    for t, card, g, state, elapsed, stab, diff in ordered:
+        eff = 2 if (g == 1.5 and state != 2) else g
+        if state == 0:
+            cards[card] = (
+                max(ref._initial_stability(rating=Rating(int(eff))), 0.1),
+                clamp(ref._initial_difficulty(rating=Rating(int(eff)), clamp=True), 1, 10),
+            )
+            continue
+        if card not in cards:
+            if stab > 0 and diff > 0:
+                cards[card] = (max(stab, 0.1), clamp(diff, 1, 10))
+            continue
+        s, d = cards[card]
+        if state == 2:
+            r = curve(elapsed, s)
+            if is_scored([t, card, g, state, elapsed]) and t > since_ms:
+                p = clamp(r, 1e-6, 1 - 1e-6)
+                y = 0 if g == 1 else 1
+                loss -= y * math.log(p) + (1 - y) * math.log(1 - p)
+                sum_r += r
+                recalled += y
+                n += 1
+            nd = lambda gr: ref._next_difficulty(difficulty=d, rating=Rating(gr))
+            if g == 1.5:
+                hard = ref._next_recall_stability(
+                    difficulty=d, stability=s, retrievability=r, rating=Rating(2))
+                cards[card] = (max(min(hard, s), 0.1), nd(2))
+            elif g == 1:
+                forget = ref._next_forget_stability(difficulty=d, stability=s, retrievability=r)
+                cards[card] = (max(forget, 0.1), nd(1))
+            else:
+                rec = ref._next_recall_stability(
+                    difficulty=d, stability=s, retrievability=r, rating=Rating(int(g)))
+                cards[card] = (max(rec, 0.1), nd(int(g)))
+        else:
+            short = ref._short_term_stability(stability=s, rating=Rating(int(eff)))
+            cards[card] = (
+                max(short, 0.1),
+                ref._next_difficulty(difficulty=d, rating=Rating(int(eff))),
+            )
+    return {
+        "n": n,
+        "logloss": loss / n,
+        "meanR": sum_r / n,
+        "recall": recalled / n,
+    }
+
+
+def replay_vectors():
+    rows = synthetic_log()
+    since = holdout_cut(rows)
+    return {
+        "rows": rows,
+        "holdout_cut": holdout_cut(rows),
+        "n_scored": sum(1 for r in rows if is_scored(r)),
+        "results": {
+            name: {"all": replay(rows, params, -1), "held_out": replay(rows, params, since)}
+            for name, params in SETS.items()
+        },
+    }
+
+
 def main():
     out = {
         "max_interval": MAX_INTERVAL,
         "bounds": {"lo": list(LOWER_BOUNDS_PARAMETERS), "hi": list(UPPER_BOUNDS_PARAMETERS)},
         "sets": [{"name": name, **vectors(params)} for name, params in SETS.items()],
         "trajectories": [trajectory(r, steps) for r, steps in TRAJECTORIES],
+        "replay": replay_vectors(),
     }
     print(json.dumps(out, separators=(",", ":")))
 

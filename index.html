@@ -173,6 +173,16 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .home-title { font-size: 1.3rem; font-weight: 900; margin-bottom: 4px; }
 .home-sub   { color: var(--text2); font-size: .85rem; margin-bottom: 20px; }
 .home-version { color: var(--text2); font-size: .72rem; text-align: center; margin-top: 14px; }
+.w-block   { margin: 18px 0; }
+.w-h       { font-weight: 700; margin-bottom: 6px; }
+.w-p       { font-size: .85rem; color: var(--text2); margin: 6px 0 10px; }
+.w-input   { width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 8px;
+  font: .8rem ui-monospace, Menlo, Consolas, monospace; color: var(--text);
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; }
+.w-result  { font-size: .85rem; margin: 8px 0 12px; min-height: 1.2em; }
+.w-row     { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: .8rem; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.w-row button { flex: none; }
 #update-banner {
   position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 60;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -498,6 +508,8 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     <button class="docs-link" id="docs-link" onclick="openDocs()">📖 Docs</button>
     <button class="icon-btn" id="docsBtn" onclick="openDocsNewTab()" title="Open docs in new tab"
       aria-label="Open documentation in a new tab">↗</button>
+    <button class="icon-btn" id="weightsBtn" onclick="showWeights()" title="FSRS weights"
+      aria-label="FSRS weights">⚙</button>
     <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme"
       aria-label="Toggle light/dark theme">🌙</button>
   </div>
@@ -643,6 +655,37 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     <button class="btn btn-primary btn-block" onclick="showHome()">
       ↩ Home<kbd class="k">Enter</kbd>
     </button>
+  </div>
+</div>
+
+<div id="s-weights" class="screen hidden">
+  <div class="panel">
+    <div class="home-title">FSRS weights</div>
+    <div class="home-sub" id="w-status"></div>
+    <div class="w-block">
+      <div class="w-h">1 · Review log</div>
+      <p class="w-p" id="w-log-info">Loading the review log…</p>
+      <button class="btn btn-secondary" id="w-export" onclick="exportReviewLog()" disabled>
+        ↓ Download review log (CSV)</button>
+      <p class="w-p">Run <code>tools/optimize.py</code> on this file (see the docs), then paste
+        its JSON below.</p>
+    </div>
+    <div class="w-block">
+      <div class="w-h">2 · Check the result</div>
+      <label for="w-input" class="w-p">Optimizer output (JSON)</label>
+      <textarea id="w-input" class="w-input" rows="4" spellcheck="false"></textarea>
+      <button class="btn btn-secondary" id="w-check" onclick="checkWeights()">Check</button>
+      <div class="w-result" id="w-result" role="status" aria-live="polite"></div>
+      <button class="btn btn-primary" id="w-apply" onclick="applyWeights()" disabled>
+        Use these weights</button>
+    </div>
+    <div class="w-block">
+      <div class="w-h">History</div>
+      <div id="w-history"></div>
+      <button class="btn btn-secondary hidden" id="w-reset" onclick="resetWeights()"
+        style="margin-top:10px">Back to the default weights</button>
+    </div>
+    <button class="btn btn-secondary btn-block" onclick="showHome()">↩ Home</button>
   </div>
 </div>
 
@@ -919,10 +962,12 @@ function shownToRating(shown, total) {
 
 // The server sends DEFAULTS merged with the user's overrides (Config.gs, settings
 // tab). The values above are the fallback; a missing or malformed value keeps them.
+let appConfig = null;               // the last config from the server (weights screen)
 function applyConfig(cfg) {
   if (!cfg) {
     return;
   }
+  appConfig = cfg;
   if (Array.isArray(cfg.w) && cfg.w.length === W.length && cfg.w.every(Number.isFinite)) {
     W = cfg.w.slice();
   }
@@ -936,6 +981,94 @@ function applyConfig(cfg) {
     console.warn('settings ignored:', JSON.stringify(cfg.rejected));
   }
 }
+
+// @replay-begin
+// Replays the review log under a weight vector with the scheduling math above and
+// scores the recall it predicts. A card's stability and difficulty are carried from
+// review to review; learning and relearning reviews (same day) only move them. The
+// loss counts Review-state reviews after at least one day (Again = forgotten, every
+// other rating, Recap included, = recalled). A card whose log starts after its first
+// review is seeded from the stability and difficulty stored with that first row.
+const EVAL_SHARE = 0.2;                           // the newest share of the reviews is held out
+
+function parseReviewLog(res) {
+  const col = name => res.columns.indexOf(name);
+  const c = { t: col('review_time'), card: col('card_id'), rating: col('rating'),
+    state: col('state_before'), elapsed: col('elapsed_days'), s: col('stability'),
+    d: col('difficulty') };
+  return res.rows
+    .map((r, i) => ({
+      i: i, t: Date.parse(r[c.t]), card: String(r[c.card]), rating: Number(r[c.rating]),
+      state: Number(r[c.state]), elapsed: Number(r[c.elapsed]) || 0,
+      stability: Number(r[c.s]), difficulty: Number(r[c.d])
+    }))
+    .filter(r => isFinite(r.t) && r.rating >= 1 && r.rating <= 4)
+    .sort((a, b) => a.t - b.t || a.i - b.i);
+}
+function isScored(r) { return r.state === 2 && r.elapsed >= 1; }
+// Review time after which the newest EVAL_SHARE of the scored reviews lie.
+function holdoutCut(rows) {
+  const scored = rows.filter(isScored);
+  if (!scored.length) {
+    return Infinity;
+  }
+  return scored[Math.max(0, Math.floor(scored.length * (1 - EVAL_SHARE)) - 1)].t;
+}
+// { n, logloss, meanR, recall } over the scored reviews later than sinceMs.
+function replayLoss(rows, w, sinceMs) {
+  const saved = W;
+  W = w;
+  try {
+    const cards = new Map();
+    let n = 0;
+    let loss = 0;
+    let sumR = 0;
+    let recalled = 0;
+    for (const row of rows) {
+      const g = row.rating;
+      const eff = (g === 1.5 && row.state !== 2) ? 2 : g;
+      const cur = cards.get(row.card);
+      if (row.state === 0) {                              // New: (re)start the card
+        cards.set(row.card, { s: initS(eff), d: initD(eff) });
+        continue;
+      }
+      if (!cur) {                                         // log starts mid-life: seed
+        if (row.stability > 0 && row.difficulty > 0) {
+          cards.set(row.card, { s: Math.max(row.stability, 0.1),
+                                d: clamp(row.difficulty, 1, 10) });
+        }
+        continue;
+      }
+      const { s, d } = cur;
+      if (row.state === 2) {
+        const r = forgettingCurve(row.elapsed, s);
+        if (isScored(row) && row.t > sinceMs) {
+          const p = Math.min(Math.max(r, 1e-6), 1 - 1e-6);
+          const y = g === 1 ? 0 : 1;
+          loss -= y * Math.log(p) + (1 - y) * Math.log(1 - p);
+          sumR += r;
+          recalled += y;
+          n += 1;
+        }
+        if (g === 1.5) {                                  // Recap: S never grows
+          cards.set(row.card, { s: Math.max(Math.min(sRecall(d, s, r, 2), s), 0.1),
+                                d: nextD(d, 2) });
+        } else if (g === 1) {
+          cards.set(row.card, { s: sForget(d, s, r), d: nextD(d, g) });
+        } else {
+          cards.set(row.card, { s: Math.max(sRecall(d, s, r, g), 0.1), d: nextD(d, g) });
+        }
+      } else {                                            // Learning, Relearning
+        cards.set(row.card, { s: sShort(s, eff), d: nextD(d, eff) });
+      }
+    }
+    return { n: n, logloss: n ? loss / n : NaN, meanR: n ? sumR / n : NaN,
+             recall: n ? recalled / n : NaN };
+  } finally {
+    W = saved;
+  }
+}
+// @replay-end
 
 // ═══════════════════════════════════════════════════════════════════════════
 // App State
@@ -1099,7 +1232,7 @@ function whenSaved(fn, timeoutMs) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Screen Management
 // ═══════════════════════════════════════════════════════════════════════════
-const SCREENS = ['s-loading','s-home','s-session','s-complete'];
+const SCREENS = ['s-loading','s-home','s-session','s-complete','s-weights'];
 function show(id) {
   SCREENS.forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
 }
@@ -1814,6 +1947,210 @@ function updateProgress() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Weights screen: export the review log, check optimizer output, apply, roll back
+// ═══════════════════════════════════════════════════════════════════════════
+// The fit itself runs outside the app (tools/optimize.py). Here a candidate is
+// replayed against the review log with the app's own scheduling math and is used
+// only if it predicts the held-out reviews better than the current weights.
+const MIN_SCORED_FOR_APPLY = 200;
+let weightRaw  = null;                 // review log as the server sent it
+let weightLog  = null;                 // parsed (replay block)
+let weightCand = null;                 // the last candidate that passed Check
+let weightHist = [];
+
+function wText(id, text) {
+  document.getElementById(id).textContent = text;
+}
+function showWeights() {
+  show('s-weights');
+  weightRaw = weightLog = weightCand = null;
+  document.getElementById('w-apply').disabled  = true;
+  document.getElementById('w-export').disabled = true;
+  wText('w-result', '');
+  wText('w-log-info', 'Loading the review log…');
+  renderWeightsStatus();
+  google.script.run
+    .withSuccessHandler(res => {
+      weightRaw = res;
+      weightLog = parseReviewLog(res);
+      const scored = weightLog.filter(isScored);
+      const cut = holdoutCut(weightLog);
+      wText('w-log-info', res.rows.length + ' reviews logged, ' + scored.length +
+        ' can be scored (Review state, at least a day since the last review).' +
+        (scored.length ? ' By default the newest 20%, after ' + dayOf(cut) + ', are held out.'
+                       : ''));
+      document.getElementById('w-export').disabled = !res.rows.length;
+    })
+    .withFailureHandler(err =>
+      wText('w-log-info', 'Could not read the review log: ' + err.message))
+    .getReviewLog();
+  loadWeightsHistory();
+}
+function renderWeightsStatus() {
+  const cfg = appConfig || {};
+  const personal = (cfg.overridden || []).includes('w');
+  const bad = (cfg.rejected || []).find(r => r.key === 'w');
+  let text = personal ? 'Using your personal weights.' : 'Using the default weights.';
+  if (bad) {
+    text += ' Saved weights in the settings tab were ignored (' + bad.reason + ').';
+  }
+  wText('w-status', text);
+  document.getElementById('w-reset').classList.toggle('hidden', !personal);
+}
+function toCsv(res) {
+  const cell = v => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return [res.columns].concat(res.rows).map(r => r.map(cell).join(',')).join('\n') + '\n';
+}
+function exportReviewLog() {
+  if (!weightRaw) {
+    return;
+  }
+  const url = URL.createObjectURL(new Blob([toCsv(weightRaw)], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'review_log.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Accepts the JSON of tools/optimize.py or a bare array of weights.
+function parseCandidate(text) {
+  let v;
+  try {
+    v = JSON.parse(text);
+  } catch (e) {
+    throw new Error('That is not valid JSON.');
+  }
+  const obj = Array.isArray(v) ? { w: v } : v;
+  const ok = obj && Array.isArray(obj.w) && obj.w.length === W.length &&
+    obj.w.every(Number.isFinite);
+  if (!ok) {
+    throw new Error('Expected ' + W.length + ' numbers as "w".');
+  }
+  if (obj.train_until !== undefined && !isFinite(Date.parse(obj.train_until))) {
+    throw new Error('"train_until" is not a date.');
+  }
+  return obj;
+}
+const pctText = x => (100 * x).toFixed(1) + '%';
+const dayOf = ms =>
+  (isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : 'the end of the log');
+function checkWeights() {
+  weightCand = null;
+  document.getElementById('w-apply').disabled = true;
+  if (!weightLog) {
+    wText('w-result', 'The review log is not loaded yet.');
+    return;
+  }
+  let cand;
+  try {
+    cand = parseCandidate(document.getElementById('w-input').value);
+  } catch (e) {
+    wText('w-result', e.message);
+    return;
+  }
+  const cut = cand.train_until ? Date.parse(cand.train_until) : holdoutCut(weightLog);
+  const cur = replayLoss(weightLog, W.slice(), cut);
+  const neu = replayLoss(weightLog, cand.w, cut);
+  const lines = [];
+  if (neu.n < MIN_SCORED_FOR_APPLY) {
+    wText('w-result', 'Only ' + neu.n + ' reviews to check against after ' + dayOf(cut) +
+      '; at least ' + MIN_SCORED_FOR_APPLY + ' are needed. Review more, then try again.');
+    return;
+  }
+  const gain = cur.logloss - neu.logloss;
+  lines.push(neu.n + ' held-out reviews. Log loss: current ' + cur.logloss.toFixed(4) +
+    ', candidate ' + neu.logloss.toFixed(4) + ' (' + (gain > 0 ? '−' : '+') +
+    Math.abs(100 * gain / cur.logloss).toFixed(1) + '%). Predicted recall ' +
+    pctText(neu.meanR) + ', actual ' + pctText(neu.recall) + '.');
+  if (!cand.train_until) {
+    lines.push('No "train_until" in the JSON: these reviews were probably used for the fit, ' +
+      'so the gain is optimistic. Run tools/optimize.py with --holdout for a fair check.');
+  }
+  lines.push(gain > 0 ? 'Better than the current weights.'
+                      : 'Not better than the current weights.');
+  wText('w-result', lines.join(' '));
+  if (gain > 0) {
+    weightCand = { w: cand.w.slice(), n: neu.n, cur: cur.logloss, neu: neu.logloss,
+                   source: String(cand.source || 'optimizer') };
+    document.getElementById('w-apply').disabled = false;
+  }
+}
+function saveWeights(w, meta, done) {
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!res || !res.ok) {
+        wText('w-result', 'Rejected: ' + JSON.stringify((res && res.errors) || {}));
+        return;
+      }
+      applyConfig(res.config);
+      weightCand = null;
+      document.getElementById('w-apply').disabled = true;
+      renderWeightsStatus();
+      loadWeightsHistory();
+      wText('w-result', done);
+    })
+    .withFailureHandler(err => wText('w-result', 'Could not save: ' + err.message))
+    .saveSettings({ w: w }, meta);
+}
+function applyWeights() {
+  const c = weightCand;
+  if (!c) {
+    return;
+  }
+  document.getElementById('w-apply').disabled = true;
+  saveWeights(c.w, { source: c.source, n_reviews: c.n, loss_before: +c.cur.toFixed(5),
+    loss_after: +c.neu.toFixed(5), note: 'held-out check' },
+    'Saved. New reviews use these weights.');
+}
+function resetWeights() {
+  saveWeights(null, { source: 'app', note: 'back to defaults' }, 'Back to the default weights.');
+}
+function restoreWeights(i) {
+  const h = weightHist[i];
+  if (h && h.w) {
+    saveWeights(h.w, { source: 'rollback', note: 'restored ' + h.time }, 'Restored.');
+  }
+}
+function loadWeightsHistory() {
+  google.script.run
+    .withSuccessHandler(list => {
+      weightHist = list || [];
+      const box = document.getElementById('w-history');
+      box.textContent = '';
+      if (!weightHist.length) {
+        box.textContent = 'No changes yet.';
+        return;
+      }
+      weightHist.forEach((h, i) => {
+        const row = document.createElement('div');
+        row.className = 'w-row';
+        const what = document.createElement('span');
+        const loss = h.loss_before != null && h.loss_after != null
+          ? ' · log loss ' + h.loss_before + ' → ' + h.loss_after : '';
+        what.textContent = h.time.slice(0, 16).replace('T', ' ') + ' · ' + (h.source || '?') +
+          (h.n_reviews != null ? ' · ' + h.n_reviews + ' reviews' : '') + loss +
+          (h.w ? '' : ' · defaults');
+        row.appendChild(what);
+        if (h.w) {
+          const btn = document.createElement('button');
+          btn.className = 'btn btn-secondary';
+          btn.textContent = 'Restore';
+          btn.onclick = () => restoreWeights(i);
+          row.appendChild(btn);
+        }
+        box.appendChild(row);
+      });
+    })
+    .withFailureHandler(() => {})
+    .getWeightsHistory();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Version and updates
 // ═══════════════════════════════════════════════════════════════════════════
 // APP_VERSION is stamped by tools/bump-version.mjs (pre-commit) together with
@@ -1821,7 +2158,7 @@ function updateProgress() {
 // live. This page sits in a frame that keeps the old code until the top window
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button.
-const APP_VERSION = '2026.11.11.1';
+const APP_VERSION = '2026.11.11.3';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

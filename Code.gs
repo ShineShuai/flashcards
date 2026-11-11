@@ -339,6 +339,46 @@ function saveSettings(patch, meta) {
   return { ok: true, config: getConfig_() };
 }
 
+// ─── Review log and weights history (weights screen) ───────────────────────
+// The whole review log, in sheet order: { columns, rows } with ISO text for dates.
+function getReviewLog() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(LOG_SHEET_NAME);
+  const last  = sheet ? sheet.getLastRow() : 0;
+  if (last < 2) {
+    return { columns: LOG_HEADERS, rows: [] };
+  }
+  const rows = sheet.getRange(2, 1, last - 1, LOG_HEADERS.length).getValues();
+  return {
+    columns: LOG_HEADERS,
+    rows: rows.map(r => r.map(v => (v instanceof Date ? v.toISOString() : v)))
+  };
+}
+
+// The last 10 changes of the weights, newest first; w is null for "back to defaults".
+function getWeightsHistory() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(WEIGHTS_SHEET_NAME);
+  const last  = sheet ? sheet.getLastRow() : 0;
+  if (last < 2) {
+    return [];
+  }
+  const first = Math.max(2, last - 9);
+  const rows  = sheet.getRange(first, 1, last - first + 1, WEIGHTS_HEADERS.length).getValues();
+  const num   = v => (v === '' ? null : Number(v));
+  return rows.reverse().map(r => {
+    let w = null;
+    try {
+      const parsed = JSON.parse(String(r[2]));
+      w = Array.isArray(parsed) ? parsed : null;
+    } catch (err) {
+      w = null;
+    }
+    return {
+      time: String(r[0]), n_reviews: num(r[1]), w: w, loss_before: num(r[3]),
+      loss_after: num(r[4]), source: String(r[5]), note: String(r[6])
+    };
+  });
+}
+
 function logWeights_(w, source, meta, now) {
   try {
     const num = v => (typeof v === 'number' && isFinite(v) ? v : '');

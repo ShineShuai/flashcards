@@ -90,3 +90,4 @@ jobs:
           python-version: "3.12"
       - run: pip install fsrs==6.3.2
       - run: python test/check_golden.py
+      - run: python test/check_optimize.py

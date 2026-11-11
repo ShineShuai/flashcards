@@ -337,7 +337,8 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
   });
   const api = vm.runInContext(
     `${code}\n({ getDueCards, getStats, updateCard, setupSheet, getDocsUrl, HEADERS, DEFAULTS,` +
-    ` saveSettings, getVersion, APP_VERSION, onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
+    ` saveSettings, getVersion, APP_VERSION, getReviewLog, getWeightsHistory,` +
+    ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
     ` tokenize_, sniffType_, thumbFormula_, appShell_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
@@ -911,6 +912,46 @@ if (isMain) {
     assert.deepEqual(plain(env.api.getVersion()),
       { version: stamped, url: 'https://script.google.com/macros/s/ID/exec' });
     assert.equal(env.api.APP_VERSION, stamped);
+  });
+
+  test('getReviewLog returns what the app logged; empty before the first review', () => {
+    const env = fixture();
+    assert.deepEqual(plain(env.api.getReviewLog()).rows, []);
+    env.put(2, { id: 'a', reps: 1 });
+    const meta = { rating: 3, state_before: 2, hints: 1, keywords: 3, duration_ms: 900 };
+    env.api.updateCard('a', fsrsFor({ last_review: '2026-11-07T09:00:00.000Z' }), meta);
+    const log = plain(env.api.getReviewLog());
+    assert.equal(log.columns[0], 'review_time');
+    assert.equal(log.rows.length, 1);
+    const row = Object.fromEntries(log.columns.map((c, i) => [c, log.rows[0][i]]));
+    assert.equal(row.card_id, 'a');
+    assert.equal(row.rating, 3);
+    assert.equal(row.state_before, 2);
+    assert.equal(row.review_time, '2026-11-07T09:00:00.000Z');
+    assert.equal(row.duration_ms, 900);
+  });
+
+  test('getWeightsHistory: newest first, at most 10, w parsed, null after a reset', () => {
+    const env = fixture();
+    assert.deepEqual(plain(env.api.getWeightsHistory()), []);
+    const w = plain(env.api.DEFAULTS.w);
+    for (let i = 0; i < 12; i++) {
+      const v = w.slice();
+      v[2] = 2 + i / 100;
+      env.api.saveSettings({ w: v }, { source: 'optimizer', n_reviews: 100 + i,
+        loss_before: 0.4, loss_after: 0.35, note: 'run ' + i });
+    }
+    env.api.saveSettings({ w: null }, { source: 'app' });
+    const hist = plain(env.api.getWeightsHistory());
+    assert.equal(hist.length, 10);
+    assert.equal(hist[0].w, null);
+    assert.equal(hist[0].note, 'back to defaults');
+    assert.equal(hist[1].note, 'run 11');
+    assert.equal(hist[1].w[2], 2.11);
+    assert.equal(hist[1].n_reviews, 111);
+    assert.equal(hist[1].loss_after, 0.35);
+    assert.equal(hist[1].source, 'optimizer');
+    assert.equal(hist[9].note, 'run 3');
   });
 
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {
