@@ -20,6 +20,8 @@ async function test(name, fn) {
 async function onHome(options = {}) {
   const env = boot({ cards: [card('1')], ...options });
   await until(() => env.shown('s-home'));
+  await until(() => env.ver.calls >= 1);           // the check made when Home opened ...
+  await sleep(10);                                 // ... and its answer, before the test acts
   env.w.eval('window.__nav = []; navigateTop = (u) => { window.__nav.push(u); }');
   env.w.eval('updateBannerDelayMs = 25');
   env.nav = () => Array.from(env.w.__nav);
@@ -50,11 +52,12 @@ await test('same version: no bar, no reload, and the loop guard is cleared', asy
 
 await test('idle on Home: reloads the top window once, with the bar as a fallback', async () => {
   const env = await onHome();
+  env.w.eval('updateBannerDelayMs = 400');           // long against the 10 ms the check takes
   await env.deploy(NEWER);
   assert.deepEqual(env.nav(), ['https://script.google.test/macros/s/ID/exec']);
   assert.equal(env.w.localStorage.getItem('fc-update-tried'), NEWER);
   assert.equal(env.banner(), false, 'not yet: the reload may still succeed');
-  await sleep(60);
+  await sleep(450);
   assert.equal(env.banner(), true, 'still here after the delay: navigation was blocked');
   assert.equal(env.txt('update-version'), NEWER);
 });

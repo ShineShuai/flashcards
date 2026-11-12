@@ -75,6 +75,14 @@ test('svg: self-closing tags, dashed and namespaced attributes', () => {
     ['string', '"2"'], ['attr', 'xlink:href'], ['string', '"#a"'], ['tag', '/>'],
   ]);
 });
+test('live cards are highlighted like html; sniffing never picks live', () => {
+  const text = '<div class="a">x</div><script>if (a < b) {}</script>';
+  assert.deepEqual(toks(text, 'live'), toks(text, 'html'));
+  assert.ok(toks(text, 'live').length > 5);
+  for (const sample of [text, '<script>1</script>', '<iframe src="x"></iframe>', '<svg/>']) {
+    assert.notEqual(sniffType_(sample), 'live', sample);
+  }
+});
 test('astral characters keep JS offsets (emoji before a tag)', () => {
   const text = '😀 😀 <b>x</b>';
   const [first] = tokenize_(text, 'html');

@@ -117,6 +117,23 @@ await test('html and svg render like the app; text is escaped', async () => {
   }
 });
 
+await test('a live card runs as the whole frame, isolated; other types stay inert', async () => {
+  const live = '<script>document.title = "x"</script><b>hi</b>';
+  const s = open([{ row: 2, id: 'a', title: '', type: 'live', content: live }]);
+  await sleep(15);
+  const flags = s.frame().getAttribute('sandbox').split(/\s+/).sort();
+  assert.deepEqual(flags, ['allow-popups', 'allow-popups-to-escape-sandbox', 'allow-scripts']);
+  const doc = s.frame().getAttribute('srcdoc');
+  assert.ok(doc.includes(live), 'script kept: this is what the card does in the app');
+  assert.match(doc, /Content-Security-Policy[^>]*connect-src 'none'/);
+  assert.equal(doc.includes('id="back-content"'), false, 'not wrapped like the other types');
+  // the next card is plain again: the scripts flag is gone
+  s.replies[0] = { row: 3, id: 'b', title: '', type: 'html', content: '<p>x</p>' };
+  await s.poll();
+  assert.equal(s.frame().getAttribute('sandbox'), 'allow-popups allow-popups-to-escape-sandbox');
+  assert.match(s.frame().getAttribute('srcdoc'), /id="back-content"/);
+});
+
 await test('an unchanged row is not re-rendered; a changed one is', async () => {
   const row = { row: 2, id: 'a', title: '', type: 'md', content: 'one' };
   const s = open([row]);

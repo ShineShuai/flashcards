@@ -28,6 +28,7 @@ const APP_CSS = <?!= JSON.stringify(shell.css).replace(/</g, '\\u003c') ?>;
 const FRAME_CSS = 'html,body{margin:0;height:auto;min-height:0;display:block;overflow:auto}' +
   'body{padding:12px;background:#fff}';
 let lastKey = '';
+const PREVIEW_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
 
 function show(res) {
   const note = document.getElementById('note');
@@ -47,7 +48,11 @@ function show(res) {
   note.hidden = true;
   frame.hidden = false;
   meta.textContent = 'row ' + res.row + ' · ' + res.id + ' · ' + res.type;
-  frame.srcdoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + APP_CSS +
+  // A live card runs (isolated, see liveDocument) as the whole frame; the rest is inert
+  const live = res.type === 'live';
+  frame.setAttribute('sandbox', live ? LIVE_SANDBOX : PREVIEW_SANDBOX);
+  frame.srcdoc = live ? liveDocument(res.content) :
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + APP_CSS +
     FRAME_CSS + '</style></head><body><div class="back-content" id="back-content">' +
     renderHtml(res.content, res.type) + '</div></body></html>';
 }

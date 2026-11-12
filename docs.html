@@ -624,7 +624,7 @@ td code { font-size: .82rem; }
     <tr><td>2</td><td><code>title</code></td>       <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>Short prompt shown first before any hints. Optional but recommended.</td></tr>
     <tr><td>3</td><td><code>keywords</code></td>    <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>Semicolons or commas: <code>cat;feline;pet</code></td></tr>
     <tr><td>4</td><td><code>back_content</code></td><td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td>The answer text, Markdown, or HTML</td></tr>
-    <tr><td>5</td><td><code>back_type</code></td>   <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td><code>text</code> · <code>md</code> · <code>html</code> · <code>svg</code></td></tr>
+    <tr><td>5</td><td><code>back_type</code></td>   <td class="td-user td-center">✓</td><td class="td-auto td-center">—</td><td><code>text</code> · <code>md</code> · <code>html</code> · <code>svg</code> · <code>live</code></td></tr>
     <tr><td>6</td><td><code>due</code></td>          <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Leave blank for new cards</td></tr>
     <tr><td>7</td><td><code>stability</code></td>    <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>FSRS memory stability</td></tr>
     <tr><td>8</td><td><code>difficulty</code></td>   <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>FSRS card difficulty (1–10)</td></tr>
@@ -666,7 +666,7 @@ Blooms ~2 weeks, late March to early April.</pre>
 </pre>
 
 <h3>back_type = html</h3>
-<p>HTML for layout, images, and styles, shown after sanitizing with DOMPurify. <strong>Kept:</strong> text formatting, tables, lists, <code>&lt;details&gt;</code>, images (https and <code>data:</code>), <code>&lt;video&gt;</code>, <code>&lt;audio&gt;</code>, inline SVG, and the <code>style</code> attribute. <strong>Removed:</strong> <code>&lt;script&gt;</code>, event handlers such as <code>onclick</code>, <code>javascript:</code> links, <code>&lt;iframe&gt;</code>, <code>&lt;object&gt;</code>, <code>&lt;embed&gt;</code>, <code>&lt;meta&gt;</code>, <code>&lt;form&gt;</code>, and <code>&lt;style&gt;</code> blocks (use <code>style</code> attributes instead). Links open in a new tab. This protects the app when you paste web or AI-generated content.</p>
+<p>HTML for layout, images, and styles, shown after sanitizing with DOMPurify. <strong>Kept:</strong> text formatting, tables, lists, <code>&lt;details&gt;</code>, images (https and <code>data:</code>), <code>&lt;video&gt;</code>, <code>&lt;audio&gt;</code>, inline SVG, and the <code>style</code> attribute. <strong>Removed:</strong> <code>&lt;script&gt;</code>, event handlers such as <code>onclick</code>, <code>javascript:</code> links, <code>&lt;iframe&gt;</code>, <code>&lt;object&gt;</code>, <code>&lt;embed&gt;</code>, <code>&lt;meta&gt;</code>, <code>&lt;form&gt;</code>, and <code>&lt;style&gt;</code> blocks (use <code>style</code> attributes instead; for scripts and iframes use <code>live</code>). Links open in a new tab. This protects the app when you paste web or AI-generated content.</p>
 <pre>
 &lt;h2&gt;桜&lt;/h2&gt;
 &lt;img src="https://drive.google.com/thumbnail?id=FILE_ID&amp;sz=w1000"
@@ -685,6 +685,18 @@ Blooms ~2 weeks, late March to early April.</pre>
   &lt;circle cx="50" cy="50" r="40" fill="#FFB7C5"/&gt;
   &lt;text x="50" y="58" text-anchor="middle" font-size="28"&gt;桜&lt;/text&gt;
 &lt;/svg&gt;
+</pre>
+
+<h3>back_type = live</h3>
+<p>For a card that needs scripts, <code>&lt;style&gt;</code> blocks or iframes: a small simulation, a chart library from a CDN, a YouTube embed. The whole content runs in a frame of its own inside the card, so it can not see or change the app. The frame has no access to <code>google.script.run</code>, the app's storage or cookies, and it can not make network requests of its own (<code>fetch</code>, XHR and WebSocket are blocked) or submit forms. It may load https images, styles, scripts, media, fonts and frames, and its links open in a new tab. The frame grows with its content, up to 4000 px.</p>
+<p>The app's keyboard shortcuts do not work while the focus is inside the frame; click outside it first. Use <code>live</code> only for content you wrote or trust: a frame can display anything, such as a fake form, and it can load third-party scripts. The Flash menu preview in the sheet runs live cards too.</p>
+<pre>
+&lt;canvas id="c" width="200" height="60"&gt;&lt;/canvas&gt;
+&lt;script&gt;
+  const g = document.getElementById('c').getContext('2d');
+  g.fillStyle = '#FFB7C5'; g.fillRect(0, 0, 200, 60);
+  g.fillStyle = '#222'; g.font = '28px sans-serif'; g.fillText('桜 sakura', 12, 40);
+&lt;/script&gt;
 </pre>
 
 <!-- ── Drive images ────────────────────────────────────────────────────── -->

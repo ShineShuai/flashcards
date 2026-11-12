@@ -1,5 +1,5 @@
 // ─── Sheet tools ───────────────────────────────────────────────────────────
-// Syntax highlighting of the back_content column (html, svg, md), back_type
+// Syntax highlighting of the back_content column (html, svg, live, md), back_type
 // sniffing and optional SVG thumbnails. They run on every edit (simple trigger
 // onEdit) and from the Flash menu, never from the web app. Cell values change
 // only where noted: a blank back_type is filled by sniffing, and the back_thumb
@@ -272,7 +272,7 @@ function tokenizeMd_(text) {
 }
 
 function tokenize_(text, kind) {
-  if (kind === 'html' || kind === 'svg') return tokenizeHtml_(text);
+  if (kind === 'html' || kind === 'svg' || kind === 'live') return tokenizeHtml_(text);
   if (kind === 'md') return tokenizeMd_(text);
   return [];
 }

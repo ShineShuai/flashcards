@@ -173,6 +173,8 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .home-title { font-size: 1.3rem; font-weight: 900; margin-bottom: 4px; }
 .home-sub   { color: var(--text2); font-size: .85rem; margin-bottom: 20px; }
 .home-version { color: var(--text2); font-size: .72rem; text-align: center; margin-top: 14px; }
+.live-frame { display: block; width: 100%; height: 260px; border: 0; margin: 8px 0;
+  border-radius: 12px; background: #fff; }
 .home-activity { text-align: center; font-size: .85rem; margin: 14px 0 2px; color: var(--text); }
 .forecast  { margin-top: 18px; }
 .forecast-head { display: flex; align-items: center; justify-content: space-between;
@@ -1542,6 +1544,22 @@ function renderBack(card) {
   document.getElementById('back-type-badge').textContent = type;
   document.getElementById('back-content').innerHTML = renderHtml(content, type);
 }
+// A live card reports its content height; only the frame that sent it is resized.
+const LIVE_MIN_HEIGHT = 40;
+const LIVE_MAX_HEIGHT = 4000;
+function onLiveMessage(e) {
+  const d = e.data;
+  if (!d || d.fcLive !== true || typeof d.h !== 'number' || !isFinite(d.h)) {
+    return;
+  }
+  document.querySelectorAll('iframe.live-frame').forEach(frame => {
+    if (frame.contentWindow === e.source) {
+      frame.style.height =
+        Math.min(Math.max(Math.ceil(d.h), LIVE_MIN_HEIGHT), LIVE_MAX_HEIGHT) + 'px';
+    }
+  });
+}
+window.addEventListener('message', onLiveMessage);
 
 // @render-begin
 // Card content -> HTML that is safe to inject. Types: text, md, html, svg; any
@@ -1568,7 +1586,44 @@ if (typeof DOMPurify !== 'undefined' && DOMPurify.isSupported) {
     }
   });
 }
+function escAttr(s) {
+  return escHtml(s).replace(/"/g, '&quot;');
+}
+// back_type "live": a card with scripts, styles or iframes. It runs in a frame of its
+// own, never in the app. The sandbox has no allow-same-origin, so the card gets an
+// opaque origin: no google.script.run, storage or cookies of the app. The CSP keeps
+// the card from fetch, XHR, WebSocket and form posts; https images, scripts, styles,
+// media, fonts and frames (YouTube, a CDN library) are allowed. Links open in a tab.
+const LIVE_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
+const LIVE_CSP = "default-src 'none'; script-src 'unsafe-inline' https:; " +
+  "style-src 'unsafe-inline' https:; img-src https: data: blob:; media-src https: data: blob:; " +
+  "font-src https: data:; frame-src https:; connect-src 'none'; form-action 'none'; " +
+  "base-uri 'none'";
+// Placed before the card's own markup, so the card can not break it. It reports the
+// height of the content to the app, which sizes the frame (see onLiveMessage).
+const LIVE_REPORTER = '(function () {' +
+  'var last = 0;' +
+  'function send() {' +
+  'var b = document.body; if (!b) return;' +
+  'var h = Math.ceil(Math.max(b.scrollHeight, b.offsetHeight));' +
+  'if (h !== last) { last = h; parent.postMessage({ fcLive: true, h: h }, "*"); }' +
+  '}' +
+  'addEventListener("load", send); document.addEventListener("DOMContentLoaded", send);' +
+  'if (window.ResizeObserver) new ResizeObserver(send).observe(document.documentElement);' +
+  '})();';
+function liveDocument(content) {
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta http-equiv="Content-Security-Policy" content="' + LIVE_CSP + '">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<style>html, body { margin: 0; } body { padding: 12px; box-sizing: border-box;' +
+    ' font: 15px/1.5 system-ui, sans-serif; color: #1d1d1f; background: #fff; }</style>' +
+    '<script>' + LIVE_REPORTER + '<' + '/script></head><body>' + content + '</body></html>';
+}
 function renderHtml(content, type) {
+  if (type === 'live') {
+    return '<iframe class="live-frame" title="Card content" sandbox="' + LIVE_SANDBOX +
+      '" srcdoc="' + escAttr(liveDocument(content)) + '"></iframe>';
+  }
   const asText = note => (note ? '<div class="back-note">' + note + '</div>' : '') +
     '<div class="back-content-text">' + escHtml(content) + '</div>';
   if (type !== 'md' && type !== 'html' && type !== 'svg') {
@@ -2519,7 +2574,7 @@ function loadWeightsHistory() {
 // live. This page sits in a frame that keeps the old code until the top window
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button.
-const APP_VERSION = '2026.11.12.3';
+const APP_VERSION = '2026.11.12.4';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
