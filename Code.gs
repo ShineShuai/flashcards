@@ -6,6 +6,9 @@ const SETTINGS_SHEET_NAME = 'settings';     // personal overrides of DEFAULTS (C
 const WEIGHTS_SHEET_NAME = 'weights_history';
 // Optional column of SVG thumbnails (Highlight.gs); never sent to the app
 const THUMB_HEADER = 'back_thumb';
+// The study day starts at this local hour; keep equal to ROLLOVER_HOUR in index.html
+const ROLLOVER_HOUR = 4;
+const FORECAST_DAYS = 30;
 const HEADERS = [
   'id', 'title', 'keywords', 'back_content', 'back_type',
   'due', 'stability', 'difficulty', 'elapsed_days',
@@ -244,14 +247,62 @@ function getDueCards() {
 // ─── API: bootstrap ────────────────────────────────────────────────────────
 // Stats and due cards from a single sheet read (home screen).
 
-function bootstrap() {
+// offsetMin: the client's UTC offset in minutes (east positive), so study days
+// are the client's. Without it, UTC.
+function bootstrap(offsetMin) {
   const cards = readCards_();
   const now   = new Date();
   return {
-    stats:  statsFrom_(cards, now),
-    cards:  dueCardsFrom_(cards, now),
-    config: getConfig_()
+    stats:    statsFrom_(cards, now),
+    cards:    dueCardsFrom_(cards, now),
+    forecast: forecastFrom_(cards, now, offsetMsOf_(offsetMin)),
+    config:   getConfig_()
   };
+}
+
+// ─── Study days: forecast and activity ─────────────────────────────────────
+
+function offsetMsOf_(offsetMin) {
+  return typeof offsetMin === 'number' && isFinite(offsetMin) ? offsetMin * 60000 : 0;
+}
+
+// Study-day index of a time: the local calendar date, the day starting at ROLLOVER_HOUR.
+function studyDayOf_(ms, offsetMs) {
+  return Math.floor((ms + offsetMs - ROLLOVER_HOUR * 3600000) / 86400000);
+}
+
+// Scheduled cards per study day, FORECAST_DAYS long: [0] = due by the end of today
+// (overdue and later-today learning steps included), [k] = k days ahead. New cards
+// have no due date and are not counted; a card due later than the range is left out.
+function forecastFrom_(cards, now, offsetMs) {
+  const today  = studyDayOf_(now.getTime(), offsetMs);
+  const counts = new Array(FORECAST_DAYS).fill(0);
+  cards.forEach(c => {
+    if (!c.due) return;
+    const ms = new Date(c.due).getTime();
+    if (!isFinite(ms)) return;
+    const k = Math.max(0, studyDayOf_(ms, offsetMs) - today);
+    if (k < FORECAST_DAYS) counts[k] += 1;
+  });
+  return counts;
+}
+
+// Reviews per study day from the review log: { today, days: { index: count } }. Reads
+// only the time column.
+function getActivity(offsetMin) {
+  const offsetMs = offsetMsOf_(offsetMin);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(LOG_SHEET_NAME);
+  const last  = sheet ? sheet.getLastRow() : 0;
+  const days  = {};
+  if (last >= 2) {
+    sheet.getRange(2, 1, last - 1, 1).getValues().forEach(row => {
+      const ms = row[0] instanceof Date ? row[0].getTime() : Date.parse(String(row[0]));
+      if (!isFinite(ms)) return;
+      const d = studyDayOf_(ms, offsetMs);
+      days[d] = (days[d] || 0) + 1;
+    });
+  }
+  return { today: studyDayOf_(Date.now(), offsetMs), days: days };
 }
 
 // ─── Config: DEFAULTS + the user's overrides ───────────────────────────────

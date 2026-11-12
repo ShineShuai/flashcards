@@ -338,6 +338,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
   const api = vm.runInContext(
     `${code}\n({ getDueCards, getStats, updateCard, setupSheet, getDocsUrl, HEADERS, DEFAULTS,` +
     ` saveSettings, getVersion, APP_VERSION, getReviewLog, getWeightsHistory,` +
+    ` getActivity, forecastFrom_, studyDayOf_, ROLLOVER_HOUR, FORECAST_DAYS,` +
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
     ` tokenize_, sniffType_, thumbFormula_, appShell_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
@@ -954,6 +955,90 @@ if (isMain) {
     assert.equal(hist[9].note, 'run 3');
   });
 
+  // ── study days: forecast and activity ────────────────────────────────────
+  const HOUR = 3600000;
+  const DAY = 24 * HOUR;
+  // UTC ms at `hour` of local study-day `k` days after today's, for a client at offsetMin
+  const atDay = (env, offsetMin, k, hour = 4) => {
+    const off = offsetMin * 60000;
+    const today = env.api.studyDayOf_(Date.now(), off);
+    return (today + k) * DAY + hour * HOUR - off;
+  };
+
+  test('ROLLOVER_HOUR on the server equals the one in index.html', () => {
+    const html = fs.readFileSync(path.join(here, '..', 'index.html'), 'utf8');
+    const client = Number(html.match(/const ROLLOVER_HOUR = (\d+);/)[1]);
+    assert.equal(client, loadCodeGs().api.ROLLOVER_HOUR);
+  });
+
+  test('forecast: study-day buckets for any client offset, boundary at 04:00 local', () => {
+    for (const offset of [0, 60, -480, 345]) {
+      const env = fixture();
+      const iso = (ms) => new Date(ms).toISOString();
+      env.put(2, { id: 'overdue', due: iso(atDay(env, offset, -5)), state: 2 });
+      env.put(3, { id: 'later', due: iso(atDay(env, offset, 0) + 20 * HOUR - 1), state: 1 });
+      env.put(4, { id: 'tomorrow-start', due: iso(atDay(env, offset, 1)), state: 2 });
+      env.put(5, { id: 'tomorrow-end', due: iso(atDay(env, offset, 2) - 1), state: 2 });
+      env.put(6, { id: 'day-2', due: iso(atDay(env, offset, 2)), state: 2 });
+      env.put(7, { id: 'last', due: iso(atDay(env, offset, 29)), state: 2 });
+      env.put(8, { id: 'beyond', due: iso(atDay(env, offset, 30)), state: 2 });
+      env.put(9, { id: 'new', due: '', state: 0 });
+      env.put(10, { id: 'bad', due: 'not a date', state: 2 });
+      const counts = plain(env.api.bootstrap(offset).forecast);
+      assert.equal(counts.length, 30, `offset ${offset}`);
+      const picked = [counts[0], counts[1], counts[2], counts[29]];
+      assert.deepEqual(picked, [2, 2, 1, 1], `offset ${offset}`);
+      assert.equal(counts.reduce((a, b) => a + b, 0), 6, 'new, junk and beyond are not counted');
+    }
+  });
+
+  test('forecast: a card due 1 ms before the study day starts is still in the day before', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', due: new Date(atDay(env, 60, 3) - 1).toISOString(), state: 2 });
+    env.put(3, { id: 'b', due: new Date(atDay(env, 60, 3)).toISOString(), state: 2 });
+    const counts = plain(env.api.bootstrap(60).forecast);
+    assert.deepEqual([counts[2], counts[3]], [1, 1]);
+  });
+
+  test('bootstrap without an offset uses UTC; the rest of the payload is unchanged', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', due: new Date(Date.now() + 2 * DAY).toISOString(), state: 2 });
+    const res = plain(env.api.bootstrap());
+    assert.equal(res.forecast.length, 30);
+    assert.equal(res.forecast.reduce((a, b) => a + b, 0), 1);
+    assert.deepEqual(Object.keys(res).sort(), ['cards', 'config', 'forecast', 'stats']);
+  });
+
+  test('getActivity: reviews per study day of the client; time column only', () => {
+    for (const offset of [0, 60, -480]) {
+      const env = fixture();
+      const log = env.ss.insertSheet('review_log');
+      ['review_time', 'card_id'].forEach((h, i) => log.raw(1, i + 1, h));
+      const rows = [atDay(env, offset, 0) + HOUR, atDay(env, offset, 0) + 5 * HOUR,
+        atDay(env, offset, 0) - 1,                         // the last minute of yesterday
+        atDay(env, offset, -1), atDay(env, offset, -3) + 2 * HOUR];
+      rows.forEach((ms, i) => {
+        log.raw(i + 2, 1, new Date(ms).toISOString());
+        log.raw(i + 2, 2, 'c' + i);
+      });
+      log.raw(7, 1, new Date(atDay(env, offset, -3) + 3 * HOUR));       // a Date cell
+      log.raw(8, 1, 'garbage');
+      const res = plain(env.api.getActivity(offset));
+      const today = env.api.studyDayOf_(Date.now(), offset * 60000);
+      assert.equal(res.today, today);
+      const want = { [today]: 2, [today - 1]: 2, [today - 3]: 2 };
+      assert.deepEqual(res.days, want, `offset ${offset}`);
+      assert.equal(env.stats.calls.getValues, 1, 'one read');
+    }
+  });
+
+  test('getActivity: no review log yet', () => {
+    const env = fixture();
+    const res = plain(env.api.getActivity(60));
+    assert.deepEqual(res.days, {});
+    assert.equal(typeof res.today, 'number');
+  });
+
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {
     const env = fixture();
     const now = Date.now();
@@ -988,8 +1073,9 @@ if (isMain) {
     const env = fixture();
     const b = env.api.bootstrap();
     const zero = { total: 0, due: 0, new: 0, review: 0 };
-    const { config, ...rest } = JSON.parse(JSON.stringify(b));
+    const { config, forecast, ...rest } = JSON.parse(JSON.stringify(b));
     assert.deepEqual(rest, { stats: zero, cards: [] });
+    assert.deepEqual(forecast, new Array(30).fill(0));
     assert.equal(config.retention, 0.94);
   });
 

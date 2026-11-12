@@ -173,6 +173,47 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .home-title { font-size: 1.3rem; font-weight: 900; margin-bottom: 4px; }
 .home-sub   { color: var(--text2); font-size: .85rem; margin-bottom: 20px; }
 .home-version { color: var(--text2); font-size: .72rem; text-align: center; margin-top: 14px; }
+.home-activity { text-align: center; font-size: .85rem; margin: 14px 0 2px; color: var(--text); }
+.forecast  { margin-top: 18px; }
+.forecast-head { display: flex; align-items: center; justify-content: space-between;
+  font-weight: 700; font-size: .85rem; margin-bottom: 6px; }
+.fc-toggle button { font: inherit; font-size: .75rem; padding: 3px 9px; cursor: pointer;
+  color: var(--text2); background: var(--surface2); border: 1px solid var(--border); }
+.fc-toggle button:first-child { border-radius: 8px 0 0 8px; }
+.fc-toggle button:last-child  { border-radius: 0 8px 8px 0; border-left: 0; }
+.fc-toggle button[aria-pressed="true"] { color: var(--text); font-weight: 700;
+  background: var(--bg2); }
+.fc-bars { display: flex; align-items: flex-end; gap: 3px; height: 90px; }
+.fc-col  { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column;
+  justify-content: flex-end; align-items: center; }
+.fc-bar  { width: 100%; min-height: 2px; border-radius: 4px 4px 0 0; background: var(--border); }
+.fc-col.today .fc-bar { background: var(--accent, #7C3AFF); }
+.fc-col.has .fc-bar   { background: var(--text2); }
+.fc-col.today.has .fc-bar { background: var(--accent, #7C3AFF); }
+.fc-num  { font-size: .62rem; color: var(--text2); line-height: 1.3; min-height: 1em; }
+.fc-lbls { display: flex; gap: 3px; margin-top: 3px; }
+.fc-lbls span { flex: 1; min-width: 0; text-align: center; font-size: .6rem; color: var(--text2);
+  overflow: hidden; white-space: nowrap; }
+#inspectBtn { display: none; }
+#inspector  { display: none; }
+@media (min-width: 1180px) {
+  #inspectBtn { display: flex; }
+  body[data-screen="s-session"].inspector-on #inspector {
+    display: block; position: fixed; z-index: 5; top: 64px; right: 16px; width: 250px;
+    max-height: calc(100vh - 80px); overflow-y: auto; padding: 12px 14px; font-size: .78rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: var(--shadow); color: var(--text);
+  }
+  body[data-screen="s-session"].inspector-on #s-session { padding-right: 280px; }
+}
+.insp-title { font-weight: 700; margin-bottom: 8px; }
+.insp-row   { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
+  border-bottom: 1px solid var(--border); }
+.insp-row span:first-child { color: var(--text2); }
+.insp-row span:last-child  { text-align: right; overflow-wrap: anywhere; }
+.insp-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.insp-table th { text-align: left; font-weight: 600; color: var(--text2); }
+.insp-table th:not(:first-child), .insp-table td:not(:first-child) { text-align: right; }
 .w-block   { margin: 18px 0; }
 .w-h       { font-weight: 700; margin-bottom: 6px; }
 .w-p       { font-size: .85rem; color: var(--text2); margin: 6px 0 10px; }
@@ -508,6 +549,8 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     <button class="docs-link" id="docs-link" onclick="openDocs()">📖 Docs</button>
     <button class="icon-btn" id="docsBtn" onclick="openDocsNewTab()" title="Open docs in new tab"
       aria-label="Open documentation in a new tab">↗</button>
+    <button class="icon-btn" id="inspectBtn" onclick="toggleInspector()" title="Card details"
+      aria-label="Card details" aria-pressed="false">🔍</button>
     <button class="icon-btn" id="weightsBtn" onclick="showWeights()" title="FSRS weights"
       aria-label="FSRS weights">⚙</button>
     <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme"
@@ -540,6 +583,18 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     <button class="btn btn-primary btn-block" id="startBtn" onclick="startSession()">
       ▶&nbsp; Start Review
     </button>
+    <div class="home-activity hidden" id="home-activity"></div>
+    <div class="forecast hidden" id="forecast">
+      <div class="forecast-head">
+        <span>Coming days</span>
+        <span class="fc-toggle">
+          <button id="fc-7" onclick="setForecastDays(7)" aria-pressed="true">7 d</button><button
+            id="fc-30" onclick="setForecastDays(30)" aria-pressed="false">30 d</button>
+        </span>
+      </div>
+      <div class="fc-bars" id="fc-bars" role="img"></div>
+      <div class="fc-lbls" id="fc-lbls" aria-hidden="true"></div>
+    </div>
     <div class="home-version" id="app-version"></div>
   </div>
 </div>
@@ -657,6 +712,11 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     </button>
   </div>
 </div>
+
+<aside id="inspector" aria-label="Card details">
+  <div class="insp-title">Card details</div>
+  <div id="inspector-body"></div>
+</aside>
 
 <div id="s-weights" class="screen hidden">
   <div class="panel">
@@ -959,6 +1019,17 @@ function shownToRating(shown, total) {
   return 1;                               // Again
 }
 // @fsrs-end
+const DEFAULT_W = W.slice();                  // the built-in defaults, before any config
+// Runs fn with the weights w in force (the scheduling functions read the global W).
+function withWeights(w, fn) {
+  const saved = W;
+  W = w;
+  try {
+    return fn();
+  } finally {
+    W = saved;
+  }
+}
 
 // The server sends DEFAULTS merged with the user's overrides (Config.gs, settings
 // tab). The values above are the fallback; a missing or malformed value keeps them.
@@ -1235,6 +1306,7 @@ function whenSaved(fn, timeoutMs) {
 const SCREENS = ['s-loading','s-home','s-session','s-complete','s-weights'];
 function show(id) {
   SCREENS.forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
+  document.body.dataset.screen = id;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1255,6 +1327,8 @@ function fetchHome() {
       const stats = res.stats;
       homeCards = res.cards;
       homeAt    = Date.now();
+      forecastCounts = Array.isArray(res.forecast) ? res.forecast : null;
+      renderForecast();
       document.getElementById('stat-due').textContent   = stats.due;
       document.getElementById('stat-new').textContent   = stats.new;
       document.getElementById('stat-total').textContent = stats.total;
@@ -1262,6 +1336,7 @@ function fetchHome() {
       btn.textContent = stats.due > 0 ? `▶  Start Review (${stats.due})` : '✓  Nothing due';
       btn.disabled    = stats.due === 0;
       show('s-home');
+      loadActivity();
       if (newerVersion) {
         updateIfIdle();            // a newer deployment was seen during the session
       } else {
@@ -1269,7 +1344,7 @@ function fetchHome() {
       }
     })
     .withFailureHandler(err => { alert('Error: ' + err.message); show('s-home'); })
-    .bootstrap();
+    .bootstrap(clientOffsetMin());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1499,6 +1574,7 @@ function renderIntervalPreviews(card) {
     const days = nextInterval(card, g, streak);
     document.getElementById('int-' + g).textContent = formatInterval(days);
   });
+  renderInspector(card, streak);
 }
 
 // ── Controls ───────────────────────────────────────────────────────────────
@@ -1947,6 +2023,175 @@ function updateProgress() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Home: forecast, reviewed today, streak
+// ═══════════════════════════════════════════════════════════════════════════
+// The server buckets by study day (starts at ROLLOVER_HOUR) of this client: it is
+// sent the UTC offset. A DST change between a review and now moves the offset by an
+// hour; only reviews within an hour of the 04:00 boundary can land a day off.
+function clientOffsetMin() {
+  return -new Date().getTimezoneOffset();
+}
+
+// @stats-begin
+// Consecutive study days, up to today, with at least one review. Today may still be
+// empty: the streak then runs up to yesterday and stays alive until the day ends.
+function currentStreak(days, today) {
+  let d = days[today] > 0 ? today : today - 1;
+  let n = 0;
+  while (days[d] > 0) {
+    n += 1;
+    d -= 1;
+  }
+  return n;
+}
+// @stats-end
+
+const FORECAST_KEY = 'fc-forecast-days';
+let forecastCounts = null;                    // [today, +1, ...] from bootstrap
+
+function setForecastDays(n) {
+  storageSet(FORECAST_KEY, String(n));
+  renderForecast();
+}
+function dayLabel(k, opts) {
+  const day = new Date((studyDay(new Date()) + k) * 86400000);   // the local date, as UTC
+  return day.toLocaleDateString(undefined, { ...opts, timeZone: 'UTC' });
+}
+function renderForecast() {
+  const box = document.getElementById('forecast');
+  if (!forecastCounts || !forecastCounts.length) {
+    box.classList.add('hidden');
+    return;
+  }
+  const n = Number(storageGet(FORECAST_KEY)) === 30 ? 30 : 7;
+  const counts = forecastCounts.slice(0, n);
+  const max = Math.max(1, ...counts);
+  const bars = document.getElementById('fc-bars');
+  const lbls = document.getElementById('fc-lbls');
+  bars.textContent = '';
+  lbls.textContent = '';
+  counts.forEach((c, k) => {
+    const when = k === 0 ? 'Today' : k === 1 ? 'Tomorrow'
+      : dayLabel(k, { weekday: 'short', day: 'numeric', month: 'short' });
+    const col = document.createElement('div');
+    col.className = 'fc-col' + (k === 0 ? ' today' : '') + (c ? ' has' : '');
+    col.title = when + ': ' + c + ' due';
+    const num = document.createElement('div');
+    num.className = 'fc-num';
+    num.textContent = n === 7 && c ? c : '';
+    const bar = document.createElement('div');
+    bar.className = 'fc-bar';
+    bar.style.height = Math.round(100 * c / max * 0.75) + '%';
+    col.append(num, bar);
+    bars.appendChild(col);
+    const lbl = document.createElement('span');
+    lbl.textContent = n === 7 ? (k === 0 ? 'Today' : dayLabel(k, { weekday: 'short' }))
+      : (k % 7 === 0 ? dayLabel(k, { day: 'numeric', month: 'short' }) : '');
+    lbls.appendChild(lbl);
+  });
+  bars.setAttribute('aria-label', 'Reviews due per day, next ' + n + ' days: ' +
+    counts.map((c, k) => (k === 0 ? 'today ' : '+' + k + ' ') + c).join(', '));
+  document.getElementById('fc-7').setAttribute('aria-pressed', String(n === 7));
+  document.getElementById('fc-30').setAttribute('aria-pressed', String(n === 30));
+  box.classList.remove('hidden');
+}
+
+function renderActivity(res) {
+  const el = document.getElementById('home-activity');
+  if (!res || !res.days) {
+    el.classList.add('hidden');
+    return;
+  }
+  const today  = res.days[res.today] || 0;
+  const streak = currentStreak(res.days, res.today);
+  let text = 'Reviewed today: ' + today;
+  if (streak > 0) {
+    text += ' · 🔥 ' + streak + '-day streak' + (today === 0 ? ' (review today to keep it)' : '');
+  }
+  el.textContent = text;
+  el.classList.remove('hidden');
+}
+function loadActivity() {
+  google.script.run
+    .withSuccessHandler(renderActivity)
+    .withFailureHandler(() => {})               // optional: Home works without it
+    .getActivity(clientOffsetMin());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Card details (side panel, wide screens): what the scheduler knows about the card
+// ═══════════════════════════════════════════════════════════════════════════
+const INSPECT_KEY = 'fc-inspector';
+const STATE_NAMES = ['New', 'Learning', 'Review', 'Relearning'];
+const RATING_ROWS = [[1, 'Again'], [2, 'Hard'], [1.5, 'Recap'], [3, 'Good'], [4, 'Easy']];
+
+function setInspector(on) {
+  document.body.classList.toggle('inspector-on', on);
+  document.getElementById('inspectBtn').setAttribute('aria-pressed', String(on));
+  storageSet(INSPECT_KEY, on ? '1' : '');
+}
+function toggleInspector() {
+  setInspector(!document.body.classList.contains('inspector-on'));
+  if (inspected) {
+    renderInspector(inspected.card, inspected.streak);
+  }
+}
+let inspected = null;                          // { card, streak } of the card on screen
+function renderInspector(card, streak) {
+  inspected = { card: card, streak: streak };
+  if (!document.body.classList.contains('inspector-on')) {
+    return;                                    // only compute what can be seen
+  }
+  const body = document.getElementById('inspector-body');
+  body.textContent = '';
+  const row = (label, value) => {
+    const r = document.createElement('div');
+    r.className = 'insp-row';
+    const a = document.createElement('span');
+    const b = document.createElement('span');
+    a.textContent = label;
+    b.textContent = value;
+    r.append(a, b);
+    body.appendChild(r);
+  };
+  const state = Number(card.state) || 0;
+  const s = Number(card.stability);
+  const last = card.last_review ? new Date(card.last_review) : null;
+  const elapsed = last ? Math.max(0, daysBetween(last, new Date())) : 0;
+  row('State', STATE_NAMES[state] + ' · ' + (Number(card.reps) || 0) + ' reviews, ' +
+    (Number(card.lapses) || 0) + ' lapses');
+  row('Stability', s > 0 ? s.toFixed(2) + ' d' : '—');
+  row('Difficulty', Number(card.difficulty) > 0 ? Number(card.difficulty).toFixed(2) : '—');
+  row('Recall now', last && s > 0
+    ? (100 * forgettingCurve(elapsed, s)).toFixed(1) + '% (' + elapsed + ' d since review)' : '—');
+  row('Last review', last ? last.toLocaleDateString() : '—');
+  row('Due', card.due ? new Date(card.due).toLocaleString() : 'new');
+  row('Last interval',
+    Number(card.scheduled_days) > 0 ? formatInterval(card.scheduled_days) : '—');
+  row('Weak keywords', String(card.weak_keywords || '') || '—');
+  row('Miss streak', String(Number(card.miss_streak) || 0));
+  const personal = appConfig && (appConfig.overridden || []).includes('w');
+  row('Settings', DESIRED_RETENTION + ' retention, max ' + MAX_INTERVAL + ' d, ' +
+    (personal ? 'personal' : 'default') + ' weights');
+  const table = document.createElement('table');
+  table.className = 'insp-table';
+  const head = table.insertRow();
+  ['If rated', 'now', 'defaults'].forEach(t => {
+    const th = document.createElement('th');
+    th.textContent = t;
+    head.appendChild(th);
+  });
+  RATING_ROWS.forEach(([g, name]) => {
+    const tr = table.insertRow();
+    tr.insertCell().textContent = name;
+    tr.insertCell().textContent = formatInterval(nextInterval(card, g, streak));
+    tr.insertCell().textContent =
+      withWeights(DEFAULT_W, () => formatInterval(nextInterval(card, g, streak)));
+  });
+  body.appendChild(table);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Weights screen: export the review log, check optimizer output, apply, roll back
 // ═══════════════════════════════════════════════════════════════════════════
 // The fit itself runs outside the app (tools/optimize.py). Here a candidate is
@@ -2158,7 +2403,7 @@ function loadWeightsHistory() {
 // live. This page sits in a frame that keeps the old code until the top window
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button.
-const APP_VERSION = '2026.11.11.3';
+const APP_VERSION = '2026.11.12.2';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
@@ -2233,6 +2478,7 @@ function navigateTop(url) {
 // Init
 // ═══════════════════════════════════════════════════════════════════════════
 document.getElementById('app-version').textContent = 'v' + APP_VERSION;
+setInspector(storageGet(INSPECT_KEY) === '1');
 document.addEventListener('visibilitychange', maybeCheckVersion);
 setInterval(maybeCheckVersion, VERSION_CHECK_EVERY_MS);
 initTheme();

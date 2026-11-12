@@ -37,16 +37,17 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 //          docsFail, failDue (getDueCards fails), config (sent with bootstrap),
 //          realMarkdown (real marked instead of an identity stub), noSanitizer,
 //          versionServer { version, url, fail } (getVersion; default: the page's own version),
-//          reviewLog { columns, rows }, weightsHistory [..], saveSettings (patch, meta) => reply
+//          reviewLog { columns, rows }, weightsHistory [..], saveSettings (patch, meta) => reply,
+//          forecast [..] (sent with bootstrap), activity { today, days } | Error (getActivity)
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
-          versionServer = {}, reviewLog, weightsHistory = [], saveSettings,
+          versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, activity,
           server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], settingsCalls: [],
-                ...server };
+                bootstrapArgs: [], activityArgs: [], ...server };
   const own = html.match(/^const APP_VERSION = '([^']*)';/m)[1];
   const ver = { version: own, url: 'https://script.google.test/macros/s/ID/exec', fail: false,
                 calls: 0, ...versionServer };   // calls: kept out of ev, which orders saves
@@ -95,7 +96,8 @@ export function boot(options = {}) {
         if (fn === 'bootstrap') {
           ev.push('bootstrap');
           const n = cards.length;
-          ok({ stats: { total: n, due: n, new: n, review: 0 }, cards: clone(), config });
+          srv.bootstrapArgs.push(args);
+          ok({ stats: { total: n, due: n, new: n, review: 0 }, cards: clone(), config, forecast });
         } else if (fn === 'getDueCards') {
           ev.push('getDueCards');
           if (failDue) {
@@ -115,6 +117,13 @@ export function boot(options = {}) {
             srv.saved.push({ id: args[0], fsrs: args[1], meta: args[2] });
             ok(srv.reply);
           }, srv.delay);
+        } else if (fn === 'getActivity') {
+          srv.activityArgs.push(args);
+          if (activity instanceof Error) {
+            bad({ message: activity.message });
+          } else if (activity) {
+            ok(activity);
+          }
         } else if (fn === 'getReviewLog') {
           if (reviewLog instanceof Error) {
             bad({ message: reviewLog.message });
