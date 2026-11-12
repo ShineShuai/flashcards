@@ -1006,7 +1006,8 @@ if (isMain) {
     const res = plain(env.api.bootstrap());
     assert.equal(res.forecast.length, 30);
     assert.equal(res.forecast.reduce((a, b) => a + b, 0), 1);
-    assert.deepEqual(Object.keys(res).sort(), ['cards', 'config', 'forecast', 'stats']);
+    assert.deepEqual(Object.keys(res).sort(),
+      ['cards', 'config', 'forecast', 'newLimit', 'stats']);
   });
 
   test('getActivity: reviews per study day of the client; time column only', () => {
@@ -1037,6 +1038,91 @@ if (isMain) {
     const res = plain(env.api.getActivity(60));
     assert.deepEqual(res.days, {});
     assert.equal(typeof res.today, 'number');
+  });
+
+  // ── new cards per day ────────────────────────────────────────────────────
+  // 8 new cards (sheet order n0..n7) and 3 reviews due; `limit` in the settings tab;
+  // `logged` = [state_before, study-day offset (0 = today), hour] rows of review_log
+  const limited = (limit, logged = [], offset = 60) => {
+    const env = fixture();
+    for (let i = 0; i < 8; i++) env.put(2 + i, { id: 'n' + i, state: 0, due: '' });
+    for (let i = 0; i < 3; i++) {
+      const due = new Date(Date.now() - (i + 1) * DAY).toISOString();
+      env.put(10 + i, { id: 'r' + i, state: 2, due });
+    }
+    env.put(13, { id: 'later', state: 2, due: new Date(Date.now() + 5 * DAY).toISOString() });
+    if (limit !== null) env.api.saveSettings({ new_per_day: limit });
+    if (logged.length) {
+      const log = env.ss.insertSheet('review_log');
+      ['review_time', 'card_id', 'rating', 'state_before'].forEach((h, i) => log.raw(1, i + 1, h));
+      logged.forEach(([state, k, hour], i) => {
+        log.raw(i + 2, 1, new Date(atDay(env, offset, k, hour)).toISOString());
+        log.raw(i + 2, 2, 'x' + i);
+        log.raw(i + 2, 3, 3);
+        log.raw(i + 2, 4, state);
+      });
+    }
+    return env;
+  };
+  const ids = (res) => plain(res.cards).map((c) => c.id);
+
+  test('new_per_day: offers the new cards the limit leaves, in sheet order; reviews stay', () => {
+    const env = limited(4, [[0, 0, 5], [2, 0, 6], [0, -1, 6], [0, 0, 23]]);   // 2 new today
+    const res = plain(env.api.bootstrap(60));
+    assert.deepEqual(res.newLimit, { limit: 4, introduced: 2, remaining: 2 });
+    assert.deepEqual(ids(res), ['r2', 'r1', 'r0', 'n0', 'n1']);
+    assert.deepEqual(res.stats, { total: 12, due: 5, new: 2, review: 3 });
+  });
+
+  test('new_per_day: a reached limit offers no new cards; a roomy one offers all', () => {
+    const reached = limited(2, [[0, 0, 5], [0, 0, 6], [0, 0, 7]]);
+    const res = plain(reached.api.bootstrap(60));
+    assert.deepEqual(res.newLimit, { limit: 2, introduced: 3, remaining: 0 });
+    assert.deepEqual(ids(res), ['r2', 'r1', 'r0']);
+    assert.deepEqual(res.stats, { total: 12, due: 3, new: 0, review: 3 });
+    const roomy = plain(limited(50).api.bootstrap(60));
+    assert.equal(roomy.cards.length, 11);
+    assert.deepEqual(roomy.stats, { total: 12, due: 11, new: 8, review: 3 });
+  });
+
+  test('new_per_day: a new study day starts at 04:00 of the client, whatever the offset', () => {
+    for (const offset of [0, 60, -480]) {
+      const env = limited(3, [[0, 0, 4], [0, -1, 3], [0, 0, 20]], offset);   // 2 today
+      assert.equal(plain(env.api.bootstrap(offset)).newLimit.introduced, 2, `offset ${offset}`);
+    }
+  });
+
+  test('no limit (the default): nothing changes and the review log is not read', () => {
+    const env = limited(5, [[0, 0, 5]]);
+    const reads = () => {
+      const before = env.stats.calls.getValues || 0;
+      const res = plain(env.api.bootstrap(60));
+      return [(env.stats.calls.getValues || 0) - before, res];
+    };
+    const [withLimit] = reads();
+    env.api.saveSettings({ new_per_day: null });
+    const [without, res] = reads();
+    assert.equal(withLimit - without, 1, 'only a limit reads the log');
+    assert.deepEqual(res.newLimit, { limit: 0, introduced: 0, remaining: 0 });
+    assert.equal(res.cards.length, 11);
+  });
+
+  test('getDueCards and getStats apply the same limit', () => {
+    const env = limited(3, [[0, 0, 5]]);
+    const view = plain(env.api.bootstrap(60));
+    assert.deepEqual(ids({ cards: env.api.getDueCards(60) }), ids(view));
+    assert.deepEqual(plain(env.api.getStats(60)), view.stats);
+  });
+
+  test('new_per_day: no review log yet counts as none introduced; bad values are refused', () => {
+    const env = limited(2);
+    assert.equal(plain(env.api.bootstrap(60)).newLimit.remaining, 2);
+    for (const bad of [-1, 1.5, 1000, '5', NaN]) {
+      assert.equal(env.api.saveSettings({ new_per_day: bad }).ok, false, String(bad));
+    }
+    assert.equal(env.api.saveSettings({ new_per_day: 0 }).ok, true);
+    assert.equal(env.api.saveSettings({ new_per_day: 999 }).ok, true);
+    assert.equal(env.api.saveSettings({ new_per_day: null }).ok, true);
   });
 
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {
@@ -1073,8 +1159,9 @@ if (isMain) {
     const env = fixture();
     const b = env.api.bootstrap();
     const zero = { total: 0, due: 0, new: 0, review: 0 };
-    const { config, forecast, ...rest } = JSON.parse(JSON.stringify(b));
+    const { config, forecast, newLimit, ...rest } = JSON.parse(JSON.stringify(b));
     assert.deepEqual(rest, { stats: zero, cards: [] });
+    assert.deepEqual(newLimit, { limit: 0, introduced: 0, remaining: 0 });
     assert.deepEqual(forecast, new Array(30).fill(0));
     assert.equal(config.retention, 0.94);
   });

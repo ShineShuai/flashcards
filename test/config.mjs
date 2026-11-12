@@ -45,11 +45,23 @@ test('LIMITS.w equal the py-fsrs parameter bounds', () => {
 });
 
 test('DEFAULTS pass their own validation', () => {
-  for (const key of ['w', 'retention', 'max_interval']) {
+  for (const key of Object.keys(cfg.DEFAULTS)) {
     assert.equal(cfg.checkSetting_(key, plain(cfg.DEFAULTS[key])), '', key);
   }
   assert.equal(cfg.LIMITS.w_lo.length, cfg.DEFAULTS.w.length);
   assert.equal(cfg.LIMITS.w_hi.length, cfg.DEFAULTS.w.length);
+});
+
+test('index.html has the same scheduling defaults and limits as Config.gs', () => {
+  const html = read('index.html');
+  const limits = vm.runInContext(
+    '(' + html.match(/const SETTING_LIMITS = (\{[\s\S]*?\});/)[1] + ')', vm.createContext({}));
+  assert.deepEqual(plain(limits), {
+    retention: plain(cfg.LIMITS.retention), max_interval: plain(cfg.LIMITS.max_interval),
+    new_per_day: plain(cfg.LIMITS.new_per_day),
+  });
+  const dflt = Number(html.match(/const DEFAULT_NEW_PER_DAY\s*=\s*(\d+);/)[1]);
+  assert.equal(dflt, cfg.DEFAULTS.new_per_day);
 });
 
 test('validation rejects NaN, strings, wrong types and lengths', () => {

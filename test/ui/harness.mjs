@@ -34,20 +34,21 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 });
 
 // options: cards, storage (initial localStorage), dark (system theme), blockStorage,
-//          docsFail, failDue (getDueCards fails), config (sent with bootstrap),
+//          docsFail, failDue (getDueCards fails), config (sent with bootstrap; or a function),
 //          realMarkdown (real marked instead of an identity stub), noSanitizer,
 //          versionServer { version, url, fail } (getVersion; default: the page's own version),
 //          reviewLog { columns, rows }, weightsHistory [..], saveSettings (patch, meta) => reply,
-//          forecast [..] (sent with bootstrap), activity { today, days } | Error (getActivity)
+//          forecast [..], newLimit { limit, introduced, remaining } (both sent with bootstrap),
+//          activity { today, days } | Error (getActivity)
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
-          versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, activity,
-          server = {} } = options;
+          versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, newLimit,
+          activity, server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], settingsCalls: [],
-                bootstrapArgs: [], activityArgs: [], ...server };
+                bootstrapArgs: [], activityArgs: [], dueArgs: [], ...server };
   const own = html.match(/^const APP_VERSION = '([^']*)';/m)[1];
   const ver = { version: own, url: 'https://script.google.test/macros/s/ID/exec', fail: false,
                 calls: 0, ...versionServer };   // calls: kept out of ev, which orders saves
@@ -97,9 +98,11 @@ export function boot(options = {}) {
           ev.push('bootstrap');
           const n = cards.length;
           srv.bootstrapArgs.push(args);
-          ok({ stats: { total: n, due: n, new: n, review: 0 }, cards: clone(), config, forecast });
+          ok({ stats: { total: n, due: n, new: n, review: 0 }, cards: clone(),
+            config: typeof config === 'function' ? config() : config, forecast, newLimit });
         } else if (fn === 'getDueCards') {
           ev.push('getDueCards');
+          srv.dueArgs.push(args);
           if (failDue) {
             bad({ message: 'boom' });
           } else {

@@ -214,6 +214,11 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .insp-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
 .insp-table th { text-align: left; font-weight: 600; color: var(--text2); }
 .insp-table th:not(:first-child), .insp-table td:not(:first-child) { text-align: right; }
+.w-field   { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 8px 0; font-size: .85rem; }
+.w-field input { width: 96px; box-sizing: border-box; padding: 6px 8px; text-align: right;
+  font: inherit; color: var(--text); background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 10px; }
 .w-block   { margin: 18px 0; }
 .w-h       { font-weight: 700; margin-bottom: 6px; }
 .w-p       { font-size: .85rem; color: var(--text2); margin: 6px 0 10px; }
@@ -573,7 +578,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
       </div>
       <div class="stat-box">
         <div class="stat-num mint" id="stat-new">—</div>
-        <div class="stat-label">New</div>
+        <div class="stat-label" id="stat-new-label">New</div>
       </div>
       <div class="stat-box">
         <div class="stat-num amber" id="stat-total">—</div>
@@ -720,10 +725,26 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 
 <div id="s-weights" class="screen hidden">
   <div class="panel">
-    <div class="home-title">FSRS weights</div>
+    <div class="home-title">FSRS settings</div>
     <div class="home-sub" id="w-status"></div>
     <div class="w-block">
-      <div class="w-h">1 · Review log</div>
+      <div class="w-h">Scheduling</div>
+      <label class="w-field" for="set-retention"><span>Desired retention (0.80 – 0.97)</span>
+        <input id="set-retention" type="number" step="0.01" min="0.8" max="0.97"
+          inputmode="decimal"></label>
+      <label class="w-field" for="set-max"><span>Maximum interval, days (30 – 3650)</span>
+        <input id="set-max" type="number" step="1" min="30" max="3650"
+          inputmode="numeric"></label>
+      <label class="w-field" for="set-new"><span>New cards per day (0 = no limit)</span>
+        <input id="set-new" type="number" step="1" min="0" max="999"
+          inputmode="numeric"></label>
+      <button class="btn btn-secondary" id="set-save" onclick="saveScheduling()">Save</button>
+      <button class="btn btn-secondary" id="set-reset" onclick="resetScheduling()">
+        Back to the defaults</button>
+      <div class="w-result" id="set-result" role="status" aria-live="polite"></div>
+    </div>
+    <div class="w-block">
+      <div class="w-h">1 · Weights: review log</div>
       <p class="w-p" id="w-log-info">Loading the review log…</p>
       <button class="btn btn-secondary" id="w-export" onclick="exportReviewLog()" disabled>
         ↓ Download review log (CSV)</button>
@@ -731,7 +752,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
         its JSON below.</p>
     </div>
     <div class="w-block">
-      <div class="w-h">2 · Check the result</div>
+      <div class="w-h">2 · Weights: check the result</div>
       <label for="w-input" class="w-p">Optimizer output (JSON)</label>
       <textarea id="w-input" class="w-input" rows="4" spellcheck="false"></textarea>
       <button class="btn btn-secondary" id="w-check" onclick="checkWeights()">Check</button>
@@ -1020,6 +1041,15 @@ function shownToRating(shown, total) {
 }
 // @fsrs-end
 const DEFAULT_W = W.slice();                  // the built-in defaults, before any config
+const DEFAULT_RETENTION    = DESIRED_RETENTION;
+const DEFAULT_MAX_INTERVAL = MAX_INTERVAL;
+const DEFAULT_NEW_PER_DAY  = 0;               // 0 = no limit; applied by the server
+// Same limits as LIMITS in Config.gs (test/config.mjs checks it)
+const SETTING_LIMITS = {
+  retention: [0.8, 0.97],
+  max_interval: [30, 3650],
+  new_per_day: [0, 999]
+};
 // Runs fn with the weights w in force (the scheduling functions read the global W).
 function withWeights(w, fn) {
   const saved = W;
@@ -1332,6 +1362,7 @@ function fetchHome() {
       document.getElementById('stat-due').textContent   = stats.due;
       document.getElementById('stat-new').textContent   = stats.new;
       document.getElementById('stat-total').textContent = stats.total;
+      renderNewLimit(res.newLimit);
       const btn = document.getElementById('startBtn');
       btn.textContent = stats.due > 0 ? `▶  Start Review (${stats.due})` : '✓  Nothing due';
       btn.disabled    = stats.due === 0;
@@ -1366,7 +1397,7 @@ function startSession() {
         alert('Error loading cards: ' + err.message);
         show('s-home');
       })
-      .getDueCards();
+      .getDueCards(clientOffsetMin());
   }, SAVE_WAIT_MS);
 }
 
@@ -2031,6 +2062,12 @@ function updateProgress() {
 function clientOffsetMin() {
   return -new Date().getTimezoneOffset();
 }
+// "New · 3/20 today" when a daily limit is set (the server applies it).
+function renderNewLimit(info) {
+  const limited = info && info.limit > 0;
+  wText('stat-new-label',
+    limited ? 'New · ' + info.introduced + '/' + info.limit + ' today' : 'New');
+}
 
 // @stats-begin
 // Consecutive study days, up to today, with at least one review. Today may still be
@@ -2212,8 +2249,10 @@ function showWeights() {
   document.getElementById('w-apply').disabled  = true;
   document.getElementById('w-export').disabled = true;
   wText('w-result', '');
+  wText('set-result', '');
   wText('w-log-info', 'Loading the review log…');
   renderWeightsStatus();
+  fillScheduling();
   google.script.run
     .withSuccessHandler(res => {
       weightRaw = res;
@@ -2242,6 +2281,83 @@ function renderWeightsStatus() {
   wText('w-status', text);
   document.getElementById('w-reset').classList.toggle('hidden', !personal);
 }
+// ── Scheduling form: retention, maximum interval, new cards per day ───────
+const SCHEDULING = [
+  // key, input id, built-in default, label for messages, whole numbers only
+  ['retention', 'set-retention', () => DEFAULT_RETENTION, 'Desired retention', false],
+  ['max_interval', 'set-max', () => DEFAULT_MAX_INTERVAL, 'Maximum interval', true],
+  ['new_per_day', 'set-new', () => DEFAULT_NEW_PER_DAY, 'New cards per day', true]
+];
+function currentSetting(key) {
+  if (key === 'retention')   return DESIRED_RETENTION;
+  if (key === 'max_interval') return MAX_INTERVAL;
+  return (appConfig && Number(appConfig.new_per_day)) || 0;
+}
+function fillScheduling() {
+  SCHEDULING.forEach(([key, id]) => {
+    document.getElementById(id).value = String(currentSetting(key));
+  });
+}
+function isOverridden(key) {
+  return !!(appConfig && (appConfig.overridden || []).includes(key));
+}
+function saveScheduling() {
+  const patch = {};
+  for (const [key, id, dflt, label, whole] of SCHEDULING) {
+    const text = document.getElementById(id).value.trim();
+    const v = Number(text);
+    const [lo, hi] = SETTING_LIMITS[key];
+    if (!text || !isFinite(v) || v < lo || v > hi || (whole && v % 1 !== 0)) {
+      wText('set-result', label + ' must be ' + (whole ? 'a whole number' : 'a number') +
+        ' from ' + lo + ' to ' + hi + '.');
+      return;
+    }
+    if (v !== currentSetting(key)) {
+      patch[key] = v === dflt() ? null : v;          // the default is no override
+    } else if (v === dflt() && isOverridden(key)) {
+      patch[key] = null;
+    }
+  }
+  if (!Object.keys(patch).length) {
+    wText('set-result', 'Nothing changed.');
+    return;
+  }
+  saveScheduleSettings(patch);
+}
+function resetScheduling() {
+  const patch = {};
+  SCHEDULING.forEach(([key]) => {
+    if (isOverridden(key)) {
+      patch[key] = null;
+    }
+  });
+  if (!Object.keys(patch).length) {
+    wText('set-result', 'Already the defaults.');
+    return;
+  }
+  saveScheduleSettings(patch);
+}
+function saveScheduleSettings(patch) {
+  document.getElementById('set-save').disabled = true;
+  google.script.run
+    .withSuccessHandler(res => {
+      document.getElementById('set-save').disabled = false;
+      if (!res || !res.ok) {
+        wText('set-result', 'Rejected: ' + JSON.stringify((res && res.errors) || {}));
+        return;
+      }
+      applyConfig(res.config);
+      fillScheduling();
+      wText('set-result', 'Saved. Retention and the interval cap apply to the next ratings; ' +
+        'the new-card limit when Home loads next.');
+    })
+    .withFailureHandler(err => {
+      document.getElementById('set-save').disabled = false;
+      wText('set-result', 'Could not save: ' + err.message);
+    })
+    .saveSettings(patch, { source: 'app', note: 'scheduling' });
+}
+
 function toCsv(res) {
   const cell = v => {
     const s = String(v);
@@ -2403,7 +2519,7 @@ function loadWeightsHistory() {
 // live. This page sits in a frame that keeps the old code until the top window
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button.
-const APP_VERSION = '2026.11.12.2';
+const APP_VERSION = '2026.11.12.3';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

@@ -12,7 +12,8 @@ const DEFAULTS = {
     1.8729, 0.5425, 0.0912, 0.0658, 0.1542
   ],
   retention: 0.94,      // interval = days until predicted recall falls to this
-  max_interval: 365     // days; caps the scheduled interval only
+  max_interval: 365,    // days; caps the scheduled interval only
+  new_per_day: 0        // new cards introduced per study day; 0 = no limit
 };
 
 // What an override may hold. The w bounds are py-fsrs 6.3.2's parameter bounds
@@ -20,6 +21,7 @@ const DEFAULTS = {
 const LIMITS = {
   retention: [0.80, 0.97],
   max_interval: [30, 3650],
+  new_per_day: [0, 999],
   w_lo: [0.001, 0.001, 0.001, 0.001, 1.0, 0.001, 0.001, 0.001, 0.0, 0.0, 0.001,
          0.001, 0.001, 0.001, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.1],
   w_hi: [100, 100, 100, 100, 10.0, 4.0, 4.0, 0.75, 4.5, 0.8, 3.5,
@@ -36,6 +38,10 @@ function checkSetting_(key, v) {
   if (key === 'max_interval') {
     return inRange(v, LIMITS.max_interval) && v % 1 === 0
       ? '' : 'expected a whole number in ' + LIMITS.max_interval.join('–');
+  }
+  if (key === 'new_per_day') {
+    return inRange(v, LIMITS.new_per_day) && v % 1 === 0
+      ? '' : 'expected a whole number in ' + LIMITS.new_per_day.join('–');
   }
   if (key === 'w') {
     if (!Array.isArray(v) || v.length !== DEFAULTS.w.length) {

@@ -240,8 +240,43 @@ function statsFrom_(cards, now) {
   return stats;
 }
 
-function getDueCards() {
-  return dueCardsFrom_(readCards_(), new Date());
+// What the app offers now: due cards (most overdue first, new cards last in sheet
+// order), their stats, and the new-card limit of the day. With new_per_day > 0 only
+// as many new cards as the limit leaves after today's first reviews (the log rows
+// with state_before 0 in the client's study day) are offered; reviews are never cut.
+function dueView_(cards, now, offsetMs, config) {
+  let due = dueCardsFrom_(cards, now);
+  const stats = statsFrom_(cards, now);
+  const limit = Number(config.new_per_day) || 0;
+  const newLimit = { limit: limit, introduced: 0, remaining: 0 };
+  if (limit > 0) {
+    newLimit.introduced = introducedToday_(now, offsetMs);
+    newLimit.remaining  = Math.max(0, limit - newLimit.introduced);
+    let seen = 0;
+    due = due.filter(c => (Number(c.state) || 0) !== 0 || ++seen <= newLimit.remaining);
+    const kept = Math.min(seen, newLimit.remaining);
+    stats.due -= stats.new - kept;
+    stats.new  = kept;
+  }
+  return { stats: stats, cards: due, newLimit: newLimit };
+}
+
+// First reviews of cards (state_before 0) in the study day of `now`.
+function introducedToday_(now, offsetMs) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(LOG_SHEET_NAME);
+  const last  = sheet ? sheet.getLastRow() : 0;
+  if (last < 2) return 0;
+  const today = studyDayOf_(now.getTime(), offsetMs);
+  let n = 0;
+  sheet.getRange(2, 1, last - 1, 4).getValues().forEach(row => {
+    const ms = row[0] instanceof Date ? row[0].getTime() : Date.parse(String(row[0]));
+    if (Number(row[3]) === 0 && isFinite(ms) && studyDayOf_(ms, offsetMs) === today) n += 1;
+  });
+  return n;
+}
+
+function getDueCards(offsetMin) {
+  return dueView_(readCards_(), new Date(), offsetMsOf_(offsetMin), getConfig_()).cards;
 }
 
 // ─── API: bootstrap ────────────────────────────────────────────────────────
@@ -250,13 +285,17 @@ function getDueCards() {
 // offsetMin: the client's UTC offset in minutes (east positive), so study days
 // are the client's. Without it, UTC.
 function bootstrap(offsetMin) {
-  const cards = readCards_();
-  const now   = new Date();
+  const cards    = readCards_();
+  const now      = new Date();
+  const offsetMs = offsetMsOf_(offsetMin);
+  const config   = getConfig_();
+  const view     = dueView_(cards, now, offsetMs, config);
   return {
-    stats:    statsFrom_(cards, now),
-    cards:    dueCardsFrom_(cards, now),
-    forecast: forecastFrom_(cards, now, offsetMsOf_(offsetMin)),
-    config:   getConfig_()
+    stats:    view.stats,
+    cards:    view.cards,
+    newLimit: view.newLimit,
+    forecast: forecastFrom_(cards, now, offsetMs),
+    config:   config
   };
 }
 
@@ -569,8 +608,8 @@ function updateCard(id, fsrs, meta) {
 
 // ─── API: getStats ─────────────────────────────────────────────────────────
 
-function getStats() {
-  return statsFrom_(readCards_(), new Date());
+function getStats(offsetMin) {
+  return dueView_(readCards_(), new Date(), offsetMsOf_(offsetMin), getConfig_()).stats;
 }
 
 // ─── Setup (run once from editor) ─────────────────────────────────────────
