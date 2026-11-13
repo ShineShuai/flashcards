@@ -340,7 +340,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ` saveSettings, getVersion, APP_VERSION, getReviewLog, getWeightsHistory,` +
     ` getActivity, forecastFrom_, studyDayOf_, ROLLOVER_HOUR, FORECAST_DAYS,` +
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
-    ` tokenize_, sniffType_, thumbFormula_, appShell_, getActiveRowPreview,` +
+    ` tokenize_, sniffType_, thumbFormula_, imageFormula_, thumbFor_, appShell_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
   return { api, ss, sheets, stats, Sheet, ctx, menu };
@@ -786,8 +786,11 @@ if (isMain) {
     assert.equal(b64Of(f), svgDoc.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"'));
     assert.equal(env.sheet.get(3, 17), '');
     assert.equal(env.sheet.heights.get(2), 72);
-    env.sheet.put(2, 5, 'html');                      // no longer an svg: thumbnail goes
+    env.sheet.put(2, 5, 'html');                      // typed html, but still an SVG document
     edit(env, 2, 5);
+    assert.match(env.sheet.get(2, 17).formula, /^=IMAGE\("data:image\/svg\+xml;base64,/);
+    env.sheet.put(2, 4, '<p>not a picture</p>');      // content that is no picture: thumbnail goes
+    edit(env, 2, 4);
     assert.equal(env.sheet.get(2, 17), '');
     const none = toolSheet([{ id: 'a', back_content: svgDoc, back_type: 'svg' }]);
     edit(none, 2, 4);
@@ -802,6 +805,33 @@ if (isMain) {
     assert.equal(kept.match(/xmlns/g).length, 1);
     assert.equal(t('<svg>' + 'x'.repeat(40000) + '</svg>'), '', 'over 45 000 characters');
     assert.equal(b64Of(t('<svg><text>桜😀</text></svg>')).includes('桜😀'), true);
+  });
+
+  test('thumbnails by content: an html card that is one https <img> gets =IMAGE(url)', () => {
+    const api = loadCodeGs().api;
+    const drive = '<img src="https://drive.google.com/thumbnail?id=X&sz=w780" alt="d" ' +
+      'style="display: block;">';
+    assert.equal(api.imageFormula_(drive), '=IMAGE("https://drive.google.com/thumbnail?id=X&sz=w780")');
+    assert.equal(api.imageFormula_("  <img alt='a' src='https://e.test/a&amp;b.png'/>\n"),
+      '=IMAGE("https://e.test/a&b.png")', 'single quotes, &amp; decoded, trailing space');
+    for (const no of ['', 'text', '<img src="http://e.test/a.png">', '<img src="data:image/png;base64,AA">',
+      '<p><img src="https://e.test/a.png"></p>', drive + drive, '<img data-src="https://e.test/a.png">',
+      '<img src="https://e.test/' + 'x'.repeat(2000) + '">']) {
+      assert.equal(api.imageFormula_(no), '', no.slice(0, 40));
+    }
+    assert.equal(api.thumbFor_('html', drive), api.imageFormula_(drive));
+    assert.match(api.thumbFor_('html', svgDoc), /^=IMAGE\("data:image\/svg\+xml;base64,/);
+    assert.match(api.thumbFor_('svg', svgDoc), /^=IMAGE\("data:image\/svg/);
+    assert.equal(api.thumbFor_('md', svgDoc), '', 'md and text show their source');
+    assert.equal(api.thumbFor_('text', drive), '');
+    assert.equal(api.thumbFor_('live', svgDoc), '');
+    const env = toolSheet([{ id: 'a', back_content: drive, back_type: 'html' },
+      { id: 'b', back_content: svgDoc, back_type: 'html' }], { thumb: true });
+    edit(env, 2, 4, 2);
+    assert.equal(env.sheet.get(2, 17).formula, api.imageFormula_(drive));
+    assert.match(env.sheet.get(3, 17).formula, /^=IMAGE\("data:image\/svg/);
+    assert.equal(env.sheet.heights.get(2), 72);
+    assert.equal(env.sheet.heights.get(3), 72);
   });
 
   test('one edit restyles at most 500 rows; Highlight all covers the rest in chunks', () => {
@@ -901,6 +931,7 @@ if (isMain) {
     const sheet = env.sheets.get('_flash_check');
     assert.match(sheet.get(1, 2), /^ok:/);
     assert.match(sheet.get(2, 1).formula, /^=IMAGE\("data:image\/svg\+xml;base64,/);
+    assert.match(sheet.get(3, 1).formula, /^=IMAGE\("https:\/\/www\.gstatic\.com\//);
     env.api.checkSheetTools();                        // can be run again
     assert.match(sheet.get(1, 2), /^ok:/);
   });

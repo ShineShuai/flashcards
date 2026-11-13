@@ -2,59 +2,119 @@
 <html>
 <head>
 <base target="_top">
+<meta charset="utf-8">
 <?!= shell.scripts ?>
 <style>
-  html, body { height: 100%; margin: 0; }
-  body {
-    font: 13px/1.4 system-ui, sans-serif; color: #24292f;
-    display: flex; flex-direction: column;
-  }
+  html, body { margin: 0; }
+  body { font: 13px/1.4 system-ui, sans-serif; color: #24292f; }
   #meta { padding: 6px 10px; border-bottom: 1px solid #d0d7de; color: #57606a; font-size: 12px; }
-  #note { padding: 10px; color: #57606a; }
-  #view { flex: 1; width: 100%; border: 0; }
+  #note, #diag { padding: 10px; color: #57606a; }
+  #card { overflow-x: auto; }
+  #diag { border-top: 1px solid #d0d7de; }
+  .live-frame { display: block; width: 100%; height: 260px; border: 0; background: #fff; }
 </style>
 </head>
 <body>
 <div id="meta"></div>
 <div id="note">Select a card row.</div>
-<iframe id="view" sandbox="allow-popups allow-popups-to-escape-sandbox" hidden></iframe>
+<!-- The card sits in a shadow root of this page, not in a nested frame: it needs no
+     layout of its own and works where Apps Script does not let a nested frame show. -->
+<div id="card" hidden></div>
+<div id="live" hidden></div>
+<div id="diag" hidden></div>
 <script>
 <?!= shell.render ?>
 </script>
 <script>
 const APP_CSS = <?!= JSON.stringify(shell.css).replace(/</g, '\\u003c') ?>;
-// Same markup as the app's #back-content, inside a sandboxed frame (no scripts,
-// no access to this page), so card CSS can not leak into the sidebar either.
-const FRAME_CSS = 'html,body{margin:0;height:auto;min-height:0;display:block;overflow:auto}' +
-  'body{padding:12px;background:#fff}';
+// The app's own stylesheet, scoped to the card: html, body and :root become .fc-page.
+const PAGE_CSS = scopeCss(APP_CSS, '.fc-page') +
+  '.fc-page{display:block;height:auto;min-height:0;overflow:visible;padding:12px;' +
+  'background:#fff}.fc-page::before,.fc-page::after{display:none}';
+let liveWaitMs = 3000;
+const cardHost = document.getElementById('card');
+const cardRoot = cardHost.attachShadow ? cardHost.attachShadow({ mode: 'open' }) : null;
+const liveBox = document.getElementById('live');
+const diag = document.getElementById('diag');
 let lastKey = '';
-const PREVIEW_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
+
+function showNote(text) {
+  const note = document.getElementById('note');
+  note.textContent = text;
+  note.hidden = false;
+  cardHost.hidden = true;
+  liveBox.hidden = true;
+  liveBox.textContent = '';
+  diag.hidden = true;
+  document.getElementById('meta').textContent = '';
+}
+
+// Same markup as the app's #back-content, in a shadow root: the app CSS can not
+// leak into this page and this page's CSS can not reach the card.
+function showCard(res) {
+  liveBox.hidden = true;
+  liveBox.textContent = '';
+  cardHost.hidden = false;
+  cardRoot.innerHTML = '<style>' + PAGE_CSS + '</style><div class="fc-page">' +
+    '<div class="back-content" id="back-content"></div></div>';
+  mountBack(cardRoot.querySelector('#back-content'), res.content, res.type);
+}
+
+// A live card runs (isolated, see liveDocument) in a nested frame. If that frame never
+// reports back, Apps Script or the browser blocked it (or its scripts): say so.
+function showLive(res) {
+  cardHost.hidden = true;
+  liveBox.hidden = false;
+  const frame = document.createElement('iframe');
+  frame.className = 'live-frame';
+  frame.title = 'Card content';
+  frame.setAttribute('sandbox', LIVE_SANDBOX);
+  frame.srcdoc = liveDocument(res.content);
+  liveBox.textContent = '';
+  liveBox.appendChild(frame);
+  setTimeout(() => {
+    if (frame.isConnected && !frame.dataset.ready) {
+      diag.textContent = 'This live card did not start: the nested frame, its scripts ' +
+        'or postMessage may be blocked here.';
+      diag.hidden = false;
+    }
+  }, liveWaitMs);
+}
+
+window.addEventListener('message', e => {
+  const d = e.data;
+  const frame = liveBox.querySelector('iframe');
+  if (frame && d && d.fcLive === true && typeof d.h === 'number' && isFinite(d.h) &&
+      frame.contentWindow === e.source) {
+    frame.dataset.ready = '1';
+    diag.hidden = true;
+    frame.style.height = Math.min(Math.max(Math.ceil(d.h), 40), 4000) + 'px';
+  }
+});
 
 function show(res) {
-  const note = document.getElementById('note');
-  const frame = document.getElementById('view');
-  const meta = document.getElementById('meta');
   if (res.note) {
-    note.textContent = res.note;
-    note.hidden = false;
-    frame.hidden = true;
-    meta.textContent = '';
+    showNote(res.note);
     lastKey = '';
     return;
   }
   const key = [res.row, res.type, res.content].join('\u0001');
   if (key === lastKey) return;
   lastKey = key;
-  note.hidden = true;
-  frame.hidden = false;
-  meta.textContent = 'row ' + res.row + ' · ' + res.id + ' · ' + res.type;
-  // A live card runs (isolated, see liveDocument) as the whole frame; the rest is inert
-  const live = res.type === 'live';
-  frame.setAttribute('sandbox', live ? LIVE_SANDBOX : PREVIEW_SANDBOX);
-  frame.srcdoc = live ? liveDocument(res.content) :
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' + APP_CSS +
-    FRAME_CSS + '</style></head><body><div class="back-content" id="back-content">' +
-    renderHtml(res.content, res.type) + '</div></body></html>';
+  document.getElementById('note').hidden = true;
+  diag.hidden = true;
+  document.getElementById('meta').textContent = 'row ' + res.row + ' · ' + res.id + ' · ' + res.type;
+  try {
+    if (res.type === 'live') {
+      showLive(res);
+    } else if (cardRoot) {
+      showCard(res);
+    } else {
+      throw new Error('this browser has no shadow DOM');
+    }
+  } catch (err) {
+    showNote('Preview failed: ' + err.message);   // the meta line is cleared; the row is not
+  }
 }
 
 function poll() {

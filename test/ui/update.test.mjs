@@ -1,8 +1,14 @@
 // Run: node test/ui/update.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
 // Version display and self-update: when the server reports another version the app
-// reloads (top window) once it is idle, else shows a Reload bar; no reload loops.
+// reloads (top window) once it is idle, else shows a Reload bar; no reload loops. The
+// frame itself is never reloaded: its address is not a page, so that is a blank page.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { boot, card, sleep, until } from './harness.mjs';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 const NEWER = '2099.01.01.1';
 let failed = 0;
@@ -60,6 +66,7 @@ await test('idle on Home: reloads the top window once, with the bar as a fallbac
   await sleep(450);
   assert.equal(env.banner(), true, 'still here after the delay: navigation was blocked');
   assert.equal(env.txt('update-version'), NEWER);
+  assert.equal(env.shown('update-hint'), true, 'and it says to reload the tab by hand');
 });
 
 await test('one automatic try per version: a mismatch that survives a reload: bar', async () => {
@@ -78,8 +85,10 @@ await test('during a review: no reload, the bar shows at once; the button reload
   await env.deploy(NEWER);
   assert.deepEqual(env.nav(), []);
   assert.equal(env.banner(), true);
+  assert.equal(env.shown('update-hint'), false, 'no hint before the button was tried');
   env.$('update-btn').click();
   assert.deepEqual(env.nav(), ['https://script.google.test/macros/s/ID/exec']);
+  assert.equal(env.shown('update-hint'), true, 'if the tap did not navigate, the hint is there');
 });
 
 await test('back on Home after a review: the waiting update is applied', async () => {
@@ -137,12 +146,22 @@ await test('checks: on Home, on tab return (max once a minute), never when hidde
   assert.equal(env.checks(), 2, 'a hidden tab does not check');
 });
 
-await test('the server URL is used; without one the page reloads itself', async () => {
+await test('the server URL is used; without one nothing is navigated and the hint shows', async () => {
   const env = await onHome({ versionServer: { url: '' } });
-  env.w.eval('window.__reloads = 0; reloadApp = () => { window.__reloads++; };');
+  env.w.eval('updateBannerDelayMs = 400');
   await env.deploy(NEWER);
-  assert.equal(env.w.__reloads, 1);
+  assert.deepEqual(env.nav(), [], 'no address to go to, and never a reload of the frame');
+  assert.equal(env.shown('update-hint'), true);
+  await sleep(450);
+  assert.equal(env.banner(), true);
+  env.$('update-btn').click();
   assert.deepEqual(env.nav(), []);
+  assert.equal(env.banner(), true, 'the bar stays: the person reloads the tab');
+});
+
+await test('the page never reloads its own frame (the code has no location.reload)', async () => {
+  const src = fs.readFileSync(path.join(here, '..', '..', 'index.html'), 'utf8');
+  assert.equal(/location\.reload\s*\(/.test(src), false);
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

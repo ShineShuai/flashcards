@@ -108,6 +108,28 @@ await test('a report from one frame does not resize another', async () => {
   assert.equal(other.style.height, '111px');
 });
 
+await test('a live frame that stays silent gets a notice; one that reports does not', async () => {
+  const silent = await back(CONTENT);
+  silent.env.w.eval('liveWaitMs = 30');
+  silent.env.w.renderBack({ back_type: 'live', back_content: CONTENT });   // again, short wait
+  await sleep(5);
+  assert.equal(silent.el.querySelector('.back-note'), null, 'not yet');
+  await sleep(60);
+  assert.match(silent.el.querySelector('.back-note').textContent, /did not start/);
+  const live = await back(CONTENT);
+  live.env.w.eval('liveWaitMs = 30');
+  live.env.w.renderBack({ back_type: 'live', back_content: CONTENT });
+  message(live.env, live.frame(), { fcLive: true, h: 200 });
+  await sleep(60);
+  assert.equal(live.el.querySelector('.back-note'), null, 'a frame that reported is fine');
+  const gone = await back(CONTENT);
+  gone.env.w.eval('liveWaitMs = 30');
+  gone.env.w.renderBack({ back_type: 'live', back_content: CONTENT });
+  gone.env.w.renderBack({ back_type: 'text', back_content: 'next' });   // the frame is gone
+  await sleep(60);
+  assert.equal(gone.el.querySelector('.back-note'), null, 'no notice for a removed frame');
+});
+
 await test('live needs neither the sanitizer nor the markdown renderer', async () => {
   const { frame } = await back(CONTENT, { noSanitizer: true });
   assert.ok(frame());

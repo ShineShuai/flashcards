@@ -1,6 +1,7 @@
 // Run: node test/ui/preview.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
 // Sidebar.html, evaluated like an Apps Script template with the shell read from
-// index.html, polling a stubbed getActiveRowPreview.
+// index.html, polling a stubbed getActiveRowPreview. A card is shown in a shadow root
+// of the page (no nested frame); only a live card gets a frame.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -55,17 +56,24 @@ function open(replies) {
     },
   });
   const w = dom.window;
+  const $ = (id) => w.document.getElementById(id);
   return {
     w, calls, replies,
-    note: () => w.document.getElementById('note'),
-    frame: () => w.document.getElementById('view'),
-    meta: () => w.document.getElementById('meta').textContent,
+    note: () => $('note'),
+    host: () => $('card'),
+    shadow: () => $('card').shadowRoot,
+    back: () => $('card').shadowRoot.querySelector('#back-content'),
+    live: () => $('live'),
+    liveFrame: () => $('live').querySelector('iframe'),
+    diag: () => $('diag'),
+    meta: () => $('meta').textContent,
     async poll() {
       w.poll();
       await sleep(15);
     },
   };
 }
+const row = (type, content, n = 2) => ({ row: n, id: 'c' + n, title: 'T', type, content });
 
 await test('the CSS literal in the page has no raw "<" (it can not close a tag)', () => {
   const literal = page.split('\n').find((line) => line.startsWith('const APP_CSS'));
@@ -78,86 +86,170 @@ await test('a note is shown while no card row is selected', async () => {
   await sleep(15);
   assert.equal(s.note().hidden, false);
   assert.equal(s.note().textContent, 'Select a card row below the header.');
-  assert.equal(s.frame().hidden, true);
+  assert.equal(s.host().hidden, true);
+  assert.equal(s.live().hidden, true);
 });
 
-await test('a row renders sanitized in a sandboxed frame, app markup and CSS', async () => {
+await test('a row renders sanitized in a shadow root: app markup and CSS, no nested frame', async () => {
   const content =
     '**hi** <img src=x onerror="window.top.__xss=1"><script>1</script> [a](https://e.test)';
-  const s = open([{ row: 2, id: 'card1', title: 'T', type: 'md', content }]);
+  const s = open([row('md', content)]);
   await sleep(15);
-  const doc = s.frame().getAttribute('srcdoc');
-  assert.equal(s.frame().hidden, false);
+  assert.equal(s.host().hidden, false);
   assert.equal(s.note().hidden, true);
-  assert.equal(s.meta(), 'row 2 · card1 · md');
-  assert.match(doc, /<div class="back-content" id="back-content">/);
-  assert.match(doc, /<strong>hi<\/strong>/);
-  assert.match(doc, /<a href="https:\/\/e\.test" target="_blank" rel="noopener noreferrer">a</);
-  assert.equal(/onerror|<script>1/.test(doc), false);
-  assert.match(doc, /\.back-content\s*\{/, 'the app CSS is in the frame');
-  const sandbox = s.frame().getAttribute('sandbox').split(/\s+/);
-  assert.equal(sandbox.includes('allow-scripts') || sandbox.includes('allow-same-origin'), false);
-  assert.ok(sandbox.includes('allow-popups'), 'links can open');
+  assert.equal(s.meta(), 'row 2 · c2 · md');
+  const back = s.back();
+  assert.ok(back, 'the app markup: .back-content#back-content');
+  assert.equal(back.className, 'back-content');
+  assert.equal(back.querySelector('strong').textContent, 'hi');
+  const a = back.querySelector('a');
+  assert.equal(a.getAttribute('href'), 'https://e.test');
+  assert.equal(a.getAttribute('target'), '_blank');
+  assert.equal(a.getAttribute('rel'), 'noopener noreferrer');
+  assert.equal(/onerror|<script/.test(s.shadow().innerHTML), false);
+  assert.equal(s.w.__xss, undefined);
+  assert.match(s.shadow().querySelector('style').textContent, /\.back-content\s*\{/,
+    'the app CSS is in the shadow root');
+  assert.equal(s.w.document.querySelectorAll('iframe').length, 0, 'no nested frame');
+  assert.equal(s.w.document.querySelector('strong'), null, 'nothing of the card in the page');
+});
+
+await test('the app CSS is scoped to the card: html, body and :root become .fc-page', async () => {
+  const s = open([row('text', 'x')]);
+  await sleep(15);
+  const css = s.shadow().querySelector('style').textContent;
+  assert.match(css, /\.fc-page\s*\{/);
+  assert.equal(/(^|[\s,}])(html|body|:root)\s*[{,]/.test(css), false);
+  assert.ok(s.shadow().querySelector('.fc-page #back-content'));
 });
 
 await test('html and svg render like the app; text is escaped', async () => {
   const cases = [
-    ['html', '<ruby>漢<rt>kan</rt></ruby><iframe src="x"></iframe>',
-      /<ruby>漢<rt>kan<\/rt><\/ruby>/, /iframe/],
-    ['svg', '<svg viewBox="0 0 1 1"><circle r="1" onload="1"/></svg>',
-      /<svg[^>]*viewBox/, /onload/],
-    ['text', '<b>x</b>', /&lt;b&gt;x&lt;\/b&gt;/, /<b>/],
+    ['html', '<ruby>漢<rt>kan</rt></ruby><iframe src="x"></iframe>', 'ruby', 'iframe'],
+    ['svg', '<svg viewBox="0 0 1 1"><circle r="1" onload="1"/></svg>', 'svg', null],
+    ['text', '<b>x</b>', null, 'b'],
   ];
   for (const [type, content, want, unwanted] of cases) {
-    const s = open([{ row: 2, id: 'a', title: '', type, content }]);
+    const s = open([row(type, content)]);
     await sleep(15);
-    const doc = s.frame().getAttribute('srcdoc');
-    assert.match(doc, want, type);
-    assert.equal(unwanted.test(doc.slice(doc.indexOf('id="back-content"'))), false, type);
+    if (want) {
+      assert.ok(s.back().querySelector(want), type);
+    }
+    if (unwanted) {
+      assert.equal(s.back().querySelector(unwanted), null, type);
+    }
+    assert.equal(/onload/.test(s.back().innerHTML), false, type);
   }
+  const text = open([row('text', '<b>x</b>')]);
+  await sleep(15);
+  assert.equal(text.back().textContent.trim(), '<b>x</b>');
 });
 
-await test('a live card runs as the whole frame, isolated; other types stay inert', async () => {
-  const live = '<script>document.title = "x"</script><b>hi</b>';
-  const s = open([{ row: 2, id: 'a', title: '', type: 'live', content: live }]);
+await test('an html card with its own <style> shows in a nested shadow root, as in the app', async () => {
+  const styled = '<head><style>body{background:#f9f9f9}mark{color:#1e3c5c}</style></head>' +
+    '<body><p>The <mark>flood</mark></p></body>';
+  const s = open([row('html', styled)]);
   await sleep(15);
-  const flags = s.frame().getAttribute('sandbox').split(/\s+/).sort();
+  const host = s.back().querySelector('.fc-styled');
+  assert.ok(host && host.shadowRoot);
+  assert.equal(host.shadowRoot.querySelector('mark').textContent, 'flood');
+  assert.match(Array.from(host.shadowRoot.querySelectorAll('style')).map((x) => x.textContent)
+    .join(' '), /\.fc-root\s*\{\s*background:#f9f9f9/);
+  assert.equal(s.shadow().querySelector('mark'), null, 'not in the preview page itself');
+  assert.equal(s.w.document.querySelector('mark'), null);
+});
+
+await test('a live card runs as a frame, isolated; other types stay inert', async () => {
+  const live = '<script>document.title = "x"</script><b>hi</b>';
+  const s = open([row('live', live)]);
+  await sleep(15);
+  assert.equal(s.live().hidden, false);
+  assert.equal(s.host().hidden, true);
+  const frame = s.liveFrame();
+  const flags = frame.getAttribute('sandbox').split(/\s+/).sort();
   assert.deepEqual(flags, ['allow-popups', 'allow-popups-to-escape-sandbox', 'allow-scripts']);
-  const doc = s.frame().getAttribute('srcdoc');
+  const doc = frame.getAttribute('srcdoc');
   assert.ok(doc.includes(live), 'script kept: this is what the card does in the app');
   assert.match(doc, /Content-Security-Policy[^>]*connect-src 'none'/);
   assert.equal(doc.includes('id="back-content"'), false, 'not wrapped like the other types');
-  // the next card is plain again: the scripts flag is gone
-  s.replies[0] = { row: 3, id: 'b', title: '', type: 'html', content: '<p>x</p>' };
+  // the next card is plain again: the frame is gone
+  s.replies[0] = row('html', '<p>x</p>', 3);
   await s.poll();
-  assert.equal(s.frame().getAttribute('sandbox'), 'allow-popups allow-popups-to-escape-sandbox');
-  assert.match(s.frame().getAttribute('srcdoc'), /id="back-content"/);
+  assert.equal(s.liveFrame(), null);
+  assert.equal(s.live().hidden, true);
+  assert.equal(s.host().hidden, false);
+  assert.ok(s.back().querySelector('p'));
+});
+
+await test('a live frame that reports back is sized; one that stays silent is called out', async () => {
+  const s = open([{ note: 'x' }]);
+  await sleep(15);
+  s.w.eval('liveWaitMs = 30');
+  s.replies[0] = row('live', '<b>hi</b>');
+  await s.poll();
+  const frame = s.liveFrame();
+  assert.equal(s.diag().hidden, true, 'not yet: the frame may still report');
+  await sleep(60);
+  assert.equal(s.diag().hidden, false, 'silent: blocked');
+  assert.match(s.diag().textContent, /did not start/);
+  s.w.dispatchEvent(new s.w.MessageEvent('message', { data: { fcLive: true, h: 321.2 },
+    source: frame.contentWindow }));
+  assert.equal(frame.style.height, '322px');
+  assert.equal(s.diag().hidden, true, 'a late report clears the notice');
+  s.w.dispatchEvent(new s.w.MessageEvent('message', { data: { fcLive: true, h: 700 },
+    source: s.w }));                                          // not from the frame
+  assert.equal(frame.style.height, '322px');
+  s.replies[0] = row('live', '<b>other</b>', 3);              // a reporting frame: no notice
+  await s.poll();
+  const second = s.liveFrame();
+  s.w.dispatchEvent(new s.w.MessageEvent('message', { data: { fcLive: true, h: 100 },
+    source: second.contentWindow }));
+  await sleep(60);
+  assert.equal(s.diag().hidden, true);
 });
 
 await test('an unchanged row is not re-rendered; a changed one is', async () => {
-  const row = { row: 2, id: 'a', title: '', type: 'md', content: 'one' };
-  const s = open([row]);
+  const r = row('md', 'one');
+  const s = open([r]);
   await sleep(15);
-  s.frame().setAttribute('srcdoc', 'SENTINEL');
+  s.back().setAttribute('data-sentinel', '1');
   await s.poll();
-  assert.equal(s.frame().getAttribute('srcdoc'), 'SENTINEL', 'same data: untouched');
-  s.replies[0] = { ...row, content: 'two' };
+  assert.equal(s.back().getAttribute('data-sentinel'), '1', 'same data: untouched');
+  s.replies[0] = { ...r, content: 'two' };
   await s.poll();
-  assert.match(s.frame().getAttribute('srcdoc'), /two/);
-  s.replies[0] = { ...row, row: 3, content: 'two' };            // another row, same text
-  s.frame().setAttribute('srcdoc', 'SENTINEL');
+  assert.match(s.back().textContent, /two/);
+  assert.equal(s.back().getAttribute('data-sentinel'), null);
+  s.back().setAttribute('data-sentinel', '1');
+  s.replies[0] = { ...r, row: 3, content: 'two' };            // another row, same text
   await s.poll();
-  assert.match(s.frame().getAttribute('srcdoc'), /two/);
+  assert.equal(s.back().getAttribute('data-sentinel'), null);
+  assert.equal(s.meta(), 'row 3 · c2 · md');
+});
+
+await test('a render error shows as a note instead of a silent blank card', async () => {
+  const s = open([{ note: 'x' }]);
+  await sleep(15);
+  s.w.mountBack = () => {
+    throw new Error('boom');
+  };
+  s.replies[0] = row('md', 'x');
+  await s.poll();
+  assert.equal(s.note().hidden, false);
+  assert.equal(s.note().textContent, 'Preview failed: boom');
+  assert.equal(s.host().hidden, true);
+  assert.equal(s.meta(), '');
 });
 
 await test('a server error shows as a note; the next good reply recovers', async () => {
   const s = open([new Error('boom')]);
   await sleep(15);
   assert.equal(s.note().textContent, 'Error: boom');
-  assert.equal(s.frame().hidden, true);
-  s.replies[0] = { row: 2, id: 'a', title: '', type: 'text', content: 'ok' };
+  assert.equal(s.host().hidden, true);
+  s.replies[0] = row('text', 'ok');
   await s.poll();
-  assert.equal(s.frame().hidden, false);
+  assert.equal(s.host().hidden, false);
+  assert.equal(s.note().hidden, true);
+  assert.equal(s.back().textContent.trim(), 'ok');
 });
 
 await test('a hidden tab does not poll', async () => {

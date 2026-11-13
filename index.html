@@ -175,6 +175,8 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .home-version { color: var(--text2); font-size: .72rem; text-align: center; margin-top: 14px; }
 .live-frame { display: block; width: 100%; height: 260px; border: 0; margin: 8px 0;
   border-radius: 12px; background: #fff; }
+.fc-styled { display: block; max-width: 100%; margin: 8px 0; overflow: hidden;
+  contain: paint; border-radius: 12px; }
 .home-activity { text-align: center; font-size: .85rem; margin: 14px 0 2px; color: var(--text); }
 .forecast  { margin-top: 18px; }
 .forecast-head { display: flex; align-items: center; justify-content: space-between;
@@ -237,6 +239,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   padding: 10px 14px; border-radius: 14px; font-size: .85rem; color: var(--text);
   background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);
 }
+.update-hint { display: block; margin-top: 2px; font-size: .75rem; color: var(--text2); }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   padding: 13px 24px; border: none; border-radius: 100px;
@@ -773,7 +776,9 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 </div>
 
 <div id="update-banner" class="hidden" role="status">
-  <span>New version <strong id="update-version"></strong> is ready.</span>
+  <span>New version <strong id="update-version"></strong> is ready.
+    <span id="update-hint" class="update-hint hidden">Nothing happened? Reload this
+    browser tab (⌘R / Ctrl+R).</span></span>
   <button class="btn btn-primary" id="update-btn" onclick="reloadApp()">Reload</button>
 </div>
 
@@ -1542,7 +1547,8 @@ function renderBack(card) {
   const type    = String(card.back_type || 'text').toLowerCase().trim();
   const content = String(card.back_content || '');
   document.getElementById('back-type-badge').textContent = type;
-  document.getElementById('back-content').innerHTML = renderHtml(content, type);
+  mountBack(document.getElementById('back-content'), content, type);
+  watchLiveFrames(document.getElementById('back-content'));
 }
 // A live card reports its content height; only the frame that sent it is resized.
 const LIVE_MIN_HEIGHT = 40;
@@ -1554,18 +1560,37 @@ function onLiveMessage(e) {
   }
   document.querySelectorAll('iframe.live-frame').forEach(frame => {
     if (frame.contentWindow === e.source) {
+      frame.dataset.ready = '1';
       frame.style.height =
         Math.min(Math.max(Math.ceil(d.h), LIVE_MIN_HEIGHT), LIVE_MAX_HEIGHT) + 'px';
     }
   });
 }
 window.addEventListener('message', onLiveMessage);
+// A live frame that never reports its height did not run (nested frames or scripts
+// blocked by the browser or by Apps Script): say so instead of showing a blank box.
+let liveWaitMs = 3000;
+function watchLiveFrames(el) {
+  el.querySelectorAll('iframe.live-frame').forEach(frame => {
+    setTimeout(() => {
+      if (frame.isConnected && !frame.dataset.ready) {
+        const note = document.createElement('div');
+        note.className = 'back-note';
+        note.textContent = 'This live card did not start: its frame or scripts may be ' +
+          'blocked here.';
+        frame.after(note);
+      }
+    }, liveWaitMs);
+  });
+}
 
 // @render-begin
 // Card content -> HTML that is safe to inject. Types: text, md, html, svg; any
 // other type is shown as text. Needs marked (md) and DOMPurify (md, html, svg).
 // Without them the source is shown as text, so a card stays usable and nothing
 // unsanitized is ever injected. Kept apart so the sheet preview can reuse it.
+// An html or svg card with its own <style> block is mounted in a shadow root (see
+// mountBack): its CSS is scoped to the card and can not restyle the app.
 function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -1618,6 +1643,45 @@ function liveDocument(content) {
     '<style>html, body { margin: 0; } body { padding: 12px; box-sizing: border-box;' +
     ' font: 15px/1.5 system-ui, sans-serif; color: #1d1d1f; background: #fff; }</style>' +
     '<script>' + LIVE_REPORTER + '<' + '/script></head><body>' + content + '</body></html>';
+}
+// Selectors of a stylesheet moved into a shadow root: html, body and :root there
+// mean the card's own root element. Only rule preludes are touched, never values.
+function scopeCss(css, root) {
+  return css.replace(/([^{}]+)\{/g, (all, prelude) => prelude
+    .replace(/(^|[\s,>+~(])(?:html|:root)\s*>?\s*body(?![\w-])/gi, (m, pre) => pre + root)
+    .replace(/(^|[\s,>+~(])(?:html|body|:root)(?![\w-])/gi, (m, pre) => pre + root) + '{');
+}
+// An html or svg card that brings <style> rules needs a scope of its own.
+function isStyledCard(content, type) {
+  return (type === 'html' || type === 'svg') && /<style[\s>]/i.test(content);
+}
+const STYLED_BASE = '.fc-root { box-sizing: border-box; padding: 12px; background: #fff;' +
+  ' color: #1d1d1f; font: 15px/1.5 system-ui, sans-serif; overflow-wrap: anywhere; }' +
+  ' .fc-root img, .fc-root svg { max-width: 100%; }';
+// The sanitized card with its <style> blocks kept and scoped; '' when it can not be made.
+function styledMarkup(content) {
+  if (typeof DOMPurify === 'undefined' || !DOMPurify.isSupported) {
+    return '';
+  }
+  const clean = DOMPurify.sanitize(content, {
+    ...SANITIZE, FORBID_TAGS: ['form'], FORCE_BODY: true
+  });
+  const scoped = clean.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
+    (m, open, css, close) => open + scopeCss(css, '.fc-root') + close);
+  return '<style>' + STYLED_BASE + '</style><div class="fc-root">' + scoped + '</div>';
+}
+// Puts a card into `el`. Everything but a styled card is plain renderHtml markup.
+function mountBack(el, content, type) {
+  const markup = isStyledCard(content, type) && typeof el.attachShadow === 'function'
+    ? styledMarkup(content) : '';
+  if (!markup) {
+    el.innerHTML = renderHtml(content, type);
+    return;
+  }
+  const host = el.ownerDocument.createElement('div');
+  host.className = 'fc-styled';
+  host.attachShadow({ mode: 'open' }).innerHTML = markup;
+  el.replaceChildren(host);
 }
 function renderHtml(content, type) {
   if (type === 'live') {
@@ -2573,8 +2637,9 @@ function loadWeightsHistory() {
 // Version.gs, which the server reports. A difference means a newer deployment is
 // live. This page sits in a frame that keeps the old code until the top window
 // loads the web app again, so an update navigates the top window. That can be
-// blocked without a tap: after an automatic try the banner offers a Reload button.
-const APP_VERSION = '2026.11.12.4';
+// blocked without a tap: after an automatic try the banner offers a Reload button
+// (and a hint to reload the tab by hand). The frame itself is never reloaded.
+const APP_VERSION = '2026.11.13.1';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
@@ -2630,18 +2695,24 @@ function showUpdateBanner() {
   document.getElementById('update-version').textContent = newerVersion;
   document.getElementById('update-banner').classList.remove('hidden');
 }
+// Never window.location.reload(): that reloads only this inner frame, and its address
+// is not a page of its own, so the result is a blank page. Without a known address
+// (or when the browser refuses) the bar stays and says to reload the tab by hand.
 function reloadApp() {
   if (execUrl) {
     navigateTop(execUrl);
-  } else {
-    window.location.reload();
   }
+  document.getElementById('update-hint').classList.remove('hidden');
 }
 function navigateTop(url) {
   try {
     window.top.location.replace(url);
   } catch (e) {
-    window.location.reload();
+    try {
+      window.open(url, '_top');
+    } catch (e2) {
+      // blocked: the bar stays
+    }
   }
 }
 
