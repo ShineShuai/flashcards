@@ -155,6 +155,22 @@ await test('a card of type text that looks like html or svg says why it shows as
   s.replies[0] = row('text', 'plain words', 7, 'text');        // looks like text: no hint
   await s.poll();
   assert.equal(s.hint().hidden, true);
+  s.replies[0] = row('image', '<img src="https://e.test/a.png">', 9, 'html');   // not a type
+  await s.poll();
+  assert.equal(s.hint().textContent, 'back_type "image" is not a type the app knows ' +
+    '(text, md, html, svg, live), so the source is shown. The content looks like html: ' +
+    'set back_type to html.');
+  assert.equal(s.back().textContent.trim(), '<img src="https://e.test/a.png">', 'shown as source');
+  s.replies[0] = row('imgae', 'plain words', 10, 'text');       // unknown, content is plain text
+  await s.poll();
+  assert.equal(s.hint().textContent, 'back_type "imgae" is not a type the app knows ' +
+    '(text, md, html, svg, live), so the source is shown. ' +
+    'Set back_type to one of text, md, html, svg, live.');
+  for (const type of ['md', 'html', 'svg', 'live']) {          // known types: no hint
+    s.replies[0] = row(type, 'x', 11, 'html');
+    await s.poll();
+    assert.equal(s.hint().hidden, true, type);
+  }
   s.replies[0] = row('text', '<b>x</b>', 8, 'html');
   await s.poll();
   assert.equal(s.hint().hidden, false);

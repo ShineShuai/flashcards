@@ -261,17 +261,22 @@ function showStatus() {
     ' · ' + libs.purify + ' · ' + libs.md;
 }
 
-// A card whose type is text (or blank) but whose content looks like html, svg or md is
-// shown as source: say why, and what to set.
+// A card is drawn only for the types the app knows. Any other back_type (a typo, "image")
+// is shown as source text, like text and blank: say so, and when the content looks like
+// html, svg or md, which type to set.
+const KNOWN_TYPES = ['text', 'md', 'html', 'svg', 'live'];
 function showHint(res) {
   const hint = document.getElementById('hint');
-  const looks = res.sniffed;
-  const mismatch = res.type === 'text' && looks && looks !== 'text';
-  hint.hidden = !mismatch;
-  hint.textContent = mismatch
-    ? 'back_type is "text" (or blank), so the source is shown. The content looks like ' +
-      looks + ': set back_type to ' + looks + '.'
-    : '';
+  const unknown = KNOWN_TYPES.indexOf(res.type) < 0;
+  const looks = res.sniffed && res.sniffed !== 'text' ? res.sniffed : '';
+  const show = unknown || (res.type === 'text' && looks);
+  hint.hidden = !show;
+  hint.textContent = !show ? '' : (unknown
+      ? 'back_type "' + res.type + '" is not a type the app knows (' + KNOWN_TYPES.join(', ') +
+        '), so the source is shown.'
+      : 'back_type is "text" (or blank), so the source is shown.') +
+    (looks ? ' The content looks like ' + looks + ': set back_type to ' + looks + '.'
+      : ' Set back_type to one of ' + KNOWN_TYPES.join(', ') + '.');
 }
 
 function showNote(text) {
