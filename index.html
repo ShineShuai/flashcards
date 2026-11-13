@@ -1670,17 +1670,48 @@ function styledMarkup(content) {
     (m, open, css, close) => open + scopeCss(css, '.fc-root') + close);
   return '<style>' + STYLED_BASE + '</style><div class="fc-root">' + scoped + '</div>';
 }
+// An <img> that does not load is a blank box. Say so under it, with the usual cause: a
+// Drive file that is not shared with "Anyone with the link" (the request goes from the
+// browser, so it can not use your sign-in). "error" does not bubble, hence a capturing
+// listener on the card's root; once per root, once per image.
+function noteBrokenImages(root) {
+  if (root.fcWatched) {
+    return;
+  }
+  root.fcWatched = true;
+  root.addEventListener('error', e => {
+    const img = e.target;
+    if (!img || img.nodeName !== 'IMG' || img.dataset.noted) {
+      return;
+    }
+    img.dataset.noted = '1';
+    const src = img.getAttribute('src') || '';
+    const note = img.ownerDocument.createElement('div');
+    note.className = 'back-note';
+    note.setAttribute('style', 'margin:4px 0;font:12px/1.4 system-ui,sans-serif;color:#b42318');
+    note.textContent = 'Image did not load: ' +
+      (/^data:/i.test(src) ? 'a data: address' : src.replace(/^https?:\/\//i, '').slice(0, 100)) +
+      (/^https:\/\/(drive|docs)\.google\.com\//i.test(src)
+        ? ' (a Drive file must be shared with "Anyone with the link"; open the address in a ' +
+          'private window to check)'
+        : ' (check the address: open it in a private window)');
+    img.after(note);
+  }, true);
+}
 // Puts a card into `el`. Everything but a styled card is plain renderHtml markup.
 function mountBack(el, content, type) {
   const markup = isStyledCard(content, type) && typeof el.attachShadow === 'function'
     ? styledMarkup(content) : '';
   if (!markup) {
+    noteBrokenImages(el);
     el.innerHTML = renderHtml(content, type);
     return;
   }
   const host = el.ownerDocument.createElement('div');
   host.className = 'fc-styled';
-  host.attachShadow({ mode: 'open' }).innerHTML = markup;
+  const shadow = host.attachShadow({ mode: 'open' });
+  noteBrokenImages(shadow);
+  shadow.innerHTML = markup;
   el.replaceChildren(host);
 }
 function renderHtml(content, type) {
@@ -2639,7 +2670,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.13.2';
+const APP_VERSION = '2026.11.13.3';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

@@ -168,6 +168,17 @@ await test('a row renders sanitized in a shadow root: app markup and CSS, no nes
   assert.equal(s.w.document.querySelector('strong'), null, 'nothing of the card in the page');
 });
 
+await test('a card image that fails to load is named in the preview, with the Drive hint', async () => {
+  const s = open([row('html', '<img src="https://drive.google.com/thumbnail?id=X&sz=w780" alt="d">')]);
+  await sleep(15);
+  const img = s.back().querySelector('img');
+  assert.equal(img.getAttribute('src'), 'https://drive.google.com/thumbnail?id=X&sz=w780');
+  assert.equal(s.back().querySelector('.back-note'), null);
+  img.dispatchEvent(new s.w.Event('error'));
+  assert.match(s.back().querySelector('.back-note').textContent,
+    /^Image did not load: drive\.google\.com\/thumbnail\?id=X&sz=w780 .*Anyone with the link/);
+});
+
 await test('the app CSS is scoped to the card: html, body and :root become .fc-page', async () => {
   const s = open([row('text', 'x')]);
   await sleep(15);

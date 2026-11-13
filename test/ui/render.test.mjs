@@ -171,6 +171,36 @@ await test('html with <style>: a shadow root holds card and CSS; body rules beco
   assert.equal(/(^|\})\s*(html|body)[\s,{>]/.test(css), false, 'no html/body selector left');
 });
 
+await test('an image that fails to load gets a notice under it, once; Drive gets the sharing hint', async () => {
+  const html = '<p><img src="https://drive.google.com/thumbnail?id=X&sz=w780" alt="d"></p>' +
+    '<img src="https://e.test/a.png"><img src="data:image/png;base64,AA">';
+  const { el, env } = await back(html, 'html');
+  const [drive, other, inline] = el.querySelectorAll('img');
+  const fail = (img) => img.dispatchEvent(new env.w.Event('error'));   // does not bubble
+  assert.equal(el.querySelector('.back-note'), null, 'nothing while images load');
+  fail(drive);
+  fail(drive);                                                        // once per image
+  fail(other);
+  fail(inline);
+  assert.equal(el.querySelectorAll('.back-note').length, 3);
+  assert.match(drive.nextElementSibling.textContent,
+    /^Image did not load: drive\.google\.com\/thumbnail\?id=X&sz=w780 \(.*"Anyone with the link".*private window/);
+  assert.match(other.nextElementSibling.textContent,
+    /^Image did not load: e\.test\/a\.png \(check the address/);
+  assert.match(inline.nextElementSibling.textContent, /^Image did not load: a data: address/);
+  env.w.renderBack({ back_type: 'html', back_content: '<img src="https://e.test/b.png">' });
+  fail(el.querySelector('img'));                                      // a later card: one listener
+  assert.equal(el.querySelectorAll('.back-note').length, 1);
+});
+
+await test('the same notice in a styled card (inside its shadow root)', async () => {
+  const { el, env } = await back('<style>p{color:red}</style><img src="https://e.test/a.png">', 'html');
+  const root = el.querySelector('.fc-styled').shadowRoot;
+  root.querySelector('img').dispatchEvent(new env.w.Event('error'));
+  assert.match(root.querySelector('.back-note').textContent, /^Image did not load: e\.test\/a\.png/);
+  assert.equal(el.querySelector('.back-note'), null, 'not in the app document');
+});
+
 await test('html without <style> stays in the app document as before', async () => {
   const { el } = await back('<p>x <mark>y</mark></p>', 'html');
   assert.equal(el.querySelector('.fc-styled'), null);
