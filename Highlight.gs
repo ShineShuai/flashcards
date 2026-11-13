@@ -1,15 +1,15 @@
 // ─── Sheet tools ───────────────────────────────────────────────────────────
 // Syntax highlighting of the back_content column (html, svg, live, md), back_type
-// sniffing and optional SVG thumbnails. They run on every edit (simple trigger
+// sniffing and optional picture thumbnails. They run on every edit (simple trigger
 // onEdit) and from the Flash menu, never from the web app. Cell values change
 // only where noted: a blank back_type is filled by sniffing, and the back_thumb
-// column (if present) holds the thumbnails: a picture of each svg card (also one typed
-// html) and of each card that is a single hosted <img>.
+// column (if present) holds =IMAGE(url) for each html card that is one hosted
+// <img src="https://...">. There is no thumbnail of an SVG: IMAGE takes http(s)
+// URLs only (a data: URI is "not a valid url"), and the preview shows SVGs.
 
 const EDIT_ROW_CAP = 500;          // rows one edit may restyle; Flash > Highlight all: the rest
 const HIGHLIGHT_CHUNK = 300;
 const THUMB_ROW_HEIGHT = 72;
-const THUMB_MAX_FORMULA = 45000;   // a cell holds 50000 characters
 const THUMB_MAX_URL = 2000;        // the longest URL IMAGE accepts
 
 // Light palette, at least 4.5:1 on white (test/highlight.mjs checks it).
@@ -299,19 +299,6 @@ function richText_(text, kind) {
   return builder.build();
 }
 
-// The =IMAGE formula of an SVG, or '' when it is not an SVG or too large for a cell.
-// An SVG image needs the xmlns attribute; script inside it never runs in an image.
-function thumbFormula_(svg) {
-  let s = String(svg).trim();
-  if (!/<svg[\s>]/i.test(s)) return '';
-  if (!/<svg\b[^>]*\sxmlns\s*=/i.test(s)) {
-    s = s.replace(/<svg\b/i, '<svg xmlns="http://www.w3.org/2000/svg"');
-  }
-  const b64 = Utilities.base64Encode(s, Utilities.Charset.UTF_8);
-  const formula = '=IMAGE("data:image/svg+xml;base64,' + b64 + '")';
-  return formula.length > THUMB_MAX_FORMULA ? '' : formula;
-}
-
 // The =IMAGE formula of a card that is one hosted picture, <img src="https://...">, or ''.
 // Sheets fetches the URL itself, so the picture must be readable for the sheet's owner.
 function imageFormula_(html) {
@@ -320,12 +307,8 @@ function imageFormula_(html) {
   return url && url.length <= THUMB_MAX_URL ? '=IMAGE("' + url + '")' : '';
 }
 
-// The thumbnail of a card by what it holds, not by its back_type alone: a card typed
-// html that is an SVG document, or one hosted picture, gets one like an svg card.
+// The thumbnail of a card: only an html card that is one hosted picture has one.
 function thumbFor_(kind, text) {
-  if (kind === 'svg' || (kind === 'html' && sniffType_(text) === 'svg')) {
-    return thumbFormula_(text);
-  }
   return kind === 'html' ? imageFormula_(text) : '';
 }
 
@@ -438,15 +421,15 @@ function onOpen() {
     .addItem('Preview card (window)', 'showPreviewWindow')
     .addSeparator()
     .addItem('Highlight all back_content', 'highlightAll')
-    .addItem('Add SVG thumbnail column', 'addThumbnailColumn')
+    .addItem('Add picture thumbnail column', 'addThumbnailColumn')
     .addItem('Check sheet tools', 'checkSheetTools')
     .addToUi();
 }
 
 // Flash menu: the two things only the real Sheets service can confirm. Writes the
 // sheet "_flash_check": A1 is styled with offsets after an emoji, B1 reports what
-// Sheets stored; A2 should show a pink circle (an IMAGE formula with a data URI), A3
-// the Sheets logo (an IMAGE formula with an https URL).
+// Sheets stored; A2 should show the Sheets logo (an IMAGE formula with an https URL,
+// what the back_thumb column uses).
 function checkSheetTools() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName('_flash_check') || ss.insertSheet('_flash_check');
@@ -462,16 +445,11 @@ function checkSheetTools() {
   sheet.getRange('B1').setValue(bad.length
     ? 'OFFSET MISMATCH after emoji: ' + bad.map(t => text.slice(t.s, t.e)).join(' ')
     : 'ok: styled runs match the JS offsets');
-  const svg = '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" fill="#FFB7C5"/></svg>';
-  sheet.getRange('A2').setFormula(thumbFormula_(svg));
-  sheet.setRowHeight(2, THUMB_ROW_HEIGHT);
-  sheet.getRange('B2').setValue('A2 should show a pink circle; if it is empty or an error, ' +
-    'IMAGE does not render data URIs here');
-  sheet.getRange('A3').setFormula(imageFormula_(
+  sheet.getRange('A2').setFormula(imageFormula_(
     '<img src="https://www.gstatic.com/images/branding/product/1x/sheets_48dp.png">'));
-  sheet.setRowHeight(3, THUMB_ROW_HEIGHT);
-  sheet.getRange('B3').setValue('A3 should show the Sheets logo; if it is empty or an error, ' +
-    'IMAGE does not load https pictures (thumbnails of <img> cards)');
+  sheet.setRowHeight(2, THUMB_ROW_HEIGHT);
+  sheet.getRange('B2').setValue('A2 should show the Sheets logo; if it is empty or an error, ' +
+    'IMAGE does not load https pictures here (thumbnails of <img> cards)');
   SpreadsheetApp.getUi().alert('Sheet "_flash_check" written. Read B1 and look at A2; ' +
     'delete the sheet afterwards.');
   return { offsetMismatches: bad.length };

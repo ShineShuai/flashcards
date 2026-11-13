@@ -38,6 +38,7 @@ jobs:
       - run: node test/highlight.mjs
       - run: node test/version.mjs
       - run: node test/contrast.mjs
+      - run: node test/sync.mjs
 
   # index.html in jsdom with a stubbed google.script.run
   ui:

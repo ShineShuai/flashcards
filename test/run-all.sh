@@ -9,7 +9,7 @@ for tz in Europe/Berlin America/Los_Angeles Asia/Tokyo; do
   echo "== fsrs-golden (TZ=$tz)"
   TZ="$tz" node test/fsrs-golden.mjs
 done
-for t in spell code config highlight version contrast; do
+for t in spell code config highlight version contrast sync; do
   echo "== $t"
   node "test/$t.mjs"
 done

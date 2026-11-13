@@ -4,6 +4,14 @@
 repos:
   - repo: local
     hooks:
+      # first: copies the card renderer of index.html into Sidebar.html (Flash > Preview),
+      # so the version stamp below covers the result
+      - id: sync-preview
+        name: copy the card renderer of index.html into Sidebar.html
+        entry: node tools/sync-preview.mjs
+        language: system
+        pass_filenames: false
+        files: ^(index|Sidebar)\.html$
       - id: bump-version
         name: stamp the app version when the deployed files change
         entry: node tools/bump-version.mjs

@@ -59,11 +59,25 @@ test('the pre-commit hook watches every deployed file and nothing else', () => {
   const cfg = fs.readFileSync(path.join(repo, '.pre-commit-config.yaml'), 'utf8');
   assert.match(cfg, /id: bump-version/);
   assert.match(cfg, /entry: node tools\/bump-version\.mjs/);
-  const re = new RegExp(cfg.match(/^\s*files: (.+)$/m)[1]);
+  const re = new RegExp(cfg.match(/id: bump-version[\s\S]*?^\s*files: (.+)$/m)[1]);
   for (const f of [...deployedFiles(repo), 'Version.gs']) {
     assert.ok(re.test(f), `${f} is not watched`);
   }
   for (const f of ['test/code.mjs', 'tools/bump-version.mjs', 'README.md', '.claspignore']) {
+    assert.equal(re.test(f), false, `${f} should not trigger it`);
+  }
+});
+
+test('the sync-preview hook runs before bump-version, so the stamp covers its result', () => {
+  const cfg = fs.readFileSync(path.join(repo, '.pre-commit-config.yaml'), 'utf8');
+  assert.ok(cfg.indexOf('id: sync-preview') > 0);
+  assert.ok(cfg.indexOf('id: sync-preview') < cfg.indexOf('id: bump-version'));
+  assert.match(cfg, /entry: node tools\/sync-preview\.mjs/);
+  const re = new RegExp(cfg.match(/id: sync-preview[\s\S]*?^\s*files: (.+)$/m)[1]);
+  for (const f of ['index.html', 'Sidebar.html']) {
+    assert.ok(re.test(f), `${f} is not watched`);
+  }
+  for (const f of ['docs.html', 'Code.gs', 'test/sync.mjs']) {
     assert.equal(re.test(f), false, `${f} should not trigger it`);
   }
 });

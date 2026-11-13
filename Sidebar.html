@@ -3,30 +3,178 @@
 <head>
 <base target="_top">
 <meta charset="utf-8">
-<?!= shell.scripts ?>
+<!-- The three regions between the @sync lines are copied from index.html by
+     tools/sync-preview.mjs (pre-commit; CI checks it). Edit index.html, not them. -->
+<!-- @sync-scripts-begin -->
+<script src="https://cdn.jsdelivr.net/npm/marked@18.1.1/lib/marked.umd.js"
+  integrity="sha384-rATToyt6602Jnq8c7w8HZwmyOUgPL7mzxX01FBWoV48ns/EgkakGozpES+PnaYOI"
+  crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.17/dist/purify.min.js"
+  integrity="sha384-P0JNneQf81HOl9VwNXK76cQ9VMD6Nfsnepxb0cCOg8+UzEdzgPHAPV4wVQrvYQSx"
+  crossorigin="anonymous"></script>
+<!-- @sync-scripts-end -->
 <style>
   html, body { margin: 0; }
   body { font: 13px/1.4 system-ui, sans-serif; color: #24292f; }
   #meta { padding: 6px 10px; border-bottom: 1px solid #d0d7de; color: #57606a; font-size: 12px; }
   #note, #diag { padding: 10px; color: #57606a; }
+  #diag { border-top: 1px solid #d0d7de; color: #b42318; white-space: pre-wrap; }
+  #status { padding: 6px 10px; border-top: 1px solid #d0d7de; color: #6e7781; font-size: 11px; }
   #card { overflow-x: auto; }
-  #diag { border-top: 1px solid #d0d7de; }
   .live-frame { display: block; width: 100%; height: 260px; border: 0; background: #fff; }
 </style>
 </head>
 <body>
 <div id="meta"></div>
-<div id="note">Select a card row.</div>
+<div id="note">Waiting for the first answer from the sheet…</div>
 <!-- The card sits in a shadow root of this page, not in a nested frame: it needs no
      layout of its own and works where Apps Script does not let a nested frame show. -->
 <div id="card" hidden></div>
 <div id="live" hidden></div>
 <div id="diag" hidden></div>
+<div id="status"></div>
 <script>
-<?!= shell.render ?>
+// First, so that an error in any later script shows on the page instead of leaving it
+// silent: the note stays on "Waiting…" and the red text says why.
+function flashFail(text) {
+  var diag = document.getElementById('diag');
+  diag.hidden = false;
+  diag.textContent = (diag.textContent ? diag.textContent + '\n' : '') + text;
+}
+window.addEventListener('error', function (e) {
+  flashFail('Script error: ' + (e.message || 'unknown') + (e.lineno ? ' (line ' + e.lineno + ')' : ''));
+});
+window.addEventListener('unhandledrejection', function (e) {
+  flashFail('Script error: ' + ((e.reason && e.reason.message) || e.reason));
+});
 </script>
 <script>
-const APP_CSS = <?!= JSON.stringify(shell.css).replace(/</g, '\\u003c') ?>;
+// @sync-render-begin
+// Card content -> HTML that is safe to inject. Types: text, md, html, svg; any
+// other type is shown as text. Needs marked (md) and DOMPurify (md, html, svg).
+// Without them the source is shown as text, so a card stays usable and nothing
+// unsanitized is ever injected. Kept apart so the sheet preview can reuse it.
+// An html or svg card with its own <style> block is mounted in a shadow root (see
+// mountBack): its CSS is scoped to the card and can not restyle the app.
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+// Scripts, event handlers, javascript: links, iframes, object/embed, meta, forms
+// and style blocks are removed; the style attribute, tables, details, media, data:
+// images and inline SVG stay. Links open in a new tab, outside this frame.
+const SANITIZE = {
+  USE_PROFILES: { html: true, svg: true, svgFilters: true },
+  FORBID_TAGS: ['style', 'form'],
+  FORBID_ATTR: ['action', 'formaction']
+};
+if (typeof DOMPurify !== 'undefined' && DOMPurify.isSupported) {
+  DOMPurify.addHook('afterSanitizeAttributes', node => {
+    if (node.nodeName.toLowerCase() === 'a' &&
+        (node.hasAttribute('href') || node.hasAttribute('xlink:href'))) {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
+  });
+}
+function escAttr(s) {
+  return escHtml(s).replace(/"/g, '&quot;');
+}
+// back_type "live": a card with scripts, styles or iframes. It runs in a frame of its
+// own, never in the app. The sandbox has no allow-same-origin, so the card gets an
+// opaque origin: no google.script.run, storage or cookies of the app. The CSP keeps
+// the card from fetch, XHR, WebSocket and form posts; https images, scripts, styles,
+// media, fonts and frames (YouTube, a CDN library) are allowed. Links open in a tab.
+const LIVE_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox';
+const LIVE_CSP = "default-src 'none'; script-src 'unsafe-inline' https:; " +
+  "style-src 'unsafe-inline' https:; img-src https: data: blob:; media-src https: data: blob:; " +
+  "font-src https: data:; frame-src https:; connect-src 'none'; form-action 'none'; " +
+  "base-uri 'none'";
+// Placed before the card's own markup, so the card can not break it. It reports the
+// height of the content to the app, which sizes the frame (see onLiveMessage).
+const LIVE_REPORTER = '(function () {' +
+  'var last = 0;' +
+  'function send() {' +
+  'var b = document.body; if (!b) return;' +
+  'var h = Math.ceil(Math.max(b.scrollHeight, b.offsetHeight));' +
+  'if (h !== last) { last = h; parent.postMessage({ fcLive: true, h: h }, "*"); }' +
+  '}' +
+  'addEventListener("load", send); document.addEventListener("DOMContentLoaded", send);' +
+  'if (window.ResizeObserver) new ResizeObserver(send).observe(document.documentElement);' +
+  '})();';
+function liveDocument(content) {
+  return '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<meta http-equiv="Content-Security-Policy" content="' + LIVE_CSP + '">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<style>html, body { margin: 0; } body { padding: 12px; box-sizing: border-box;' +
+    ' font: 15px/1.5 system-ui, sans-serif; color: #1d1d1f; background: #fff; }</style>' +
+    '<script>' + LIVE_REPORTER + '<' + '/script></head><body>' + content + '</body></html>';
+}
+// Selectors of a stylesheet moved into a shadow root: html, body and :root there
+// mean the card's own root element. Only rule preludes are touched, never values.
+function scopeCss(css, root) {
+  return css.replace(/([^{}]+)\{/g, (all, prelude) => prelude
+    .replace(/(^|[\s,>+~(])(?:html|:root)\s*>?\s*body(?![\w-])/gi, (m, pre) => pre + root)
+    .replace(/(^|[\s,>+~(])(?:html|body|:root)(?![\w-])/gi, (m, pre) => pre + root) + '{');
+}
+// An html or svg card that brings <style> rules needs a scope of its own.
+function isStyledCard(content, type) {
+  return (type === 'html' || type === 'svg') && /<style[\s>]/i.test(content);
+}
+const STYLED_BASE = '.fc-root { box-sizing: border-box; padding: 12px; background: #fff;' +
+  ' color: #1d1d1f; font: 15px/1.5 system-ui, sans-serif; overflow-wrap: anywhere; }' +
+  ' .fc-root img, .fc-root svg { max-width: 100%; }';
+// The sanitized card with its <style> blocks kept and scoped; '' when it can not be made.
+function styledMarkup(content) {
+  if (typeof DOMPurify === 'undefined' || !DOMPurify.isSupported) {
+    return '';
+  }
+  const clean = DOMPurify.sanitize(content, {
+    ...SANITIZE, FORBID_TAGS: ['form'], FORCE_BODY: true
+  });
+  const scoped = clean.replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style>)/gi,
+    (m, open, css, close) => open + scopeCss(css, '.fc-root') + close);
+  return '<style>' + STYLED_BASE + '</style><div class="fc-root">' + scoped + '</div>';
+}
+// Puts a card into `el`. Everything but a styled card is plain renderHtml markup.
+function mountBack(el, content, type) {
+  const markup = isStyledCard(content, type) && typeof el.attachShadow === 'function'
+    ? styledMarkup(content) : '';
+  if (!markup) {
+    el.innerHTML = renderHtml(content, type);
+    return;
+  }
+  const host = el.ownerDocument.createElement('div');
+  host.className = 'fc-styled';
+  host.attachShadow({ mode: 'open' }).innerHTML = markup;
+  el.replaceChildren(host);
+}
+function renderHtml(content, type) {
+  if (type === 'live') {
+    return '<iframe class="live-frame" title="Card content" sandbox="' + LIVE_SANDBOX +
+      '" srcdoc="' + escAttr(liveDocument(content)) + '"></iframe>';
+  }
+  const asText = note => (note ? '<div class="back-note">' + note + '</div>' : '') +
+    '<div class="back-content-text">' + escHtml(content) + '</div>';
+  if (type !== 'md' && type !== 'html' && type !== 'svg') {
+    return asText('');
+  }
+  if (typeof DOMPurify === 'undefined' || !DOMPurify.isSupported) {
+    return asText('Sanitizer not loaded; showing the source.');
+  }
+  if (type === 'md') {
+    if (typeof marked === 'undefined') {
+      return asText('Markdown renderer not loaded; showing the source.');
+    }
+    return DOMPurify.sanitize(marked.parse(content), SANITIZE);
+  }
+  return DOMPurify.sanitize(content, SANITIZE);
+}
+// @sync-render-end
+</script>
+<script>
+// @sync-css-begin
+const APP_CSS = "\n:root {\n  --pink:    #FF2D87;\n  --purple:  #7C3AFF;\n  --mint:    #00D68F;\n  --amber:   #FFB800;\n  --blue:    #00B4FF;\n  --red:     #FF3B30;\n  --bg:        #F5F0FF;\n  --bg2:       #EDE8FF;\n  --surface:   #FFFFFF;\n  --surface2:  #F8F5FF;\n  --text:      #14142B;\n  --text2:     #5E5B87;\n  --border:    rgba(124,58,255,0.15);\n  --shadow:    0 8px 40px rgba(124,58,255,0.14);\n  --shadow-sm: 0 2px 12px rgba(124,58,255,0.10);\n  --radius:    20px;\n  /* text-safe accents (>= 4.5:1 on white and on --bg2) */\n  --mint-t:    #00704D;\n  --blue-t:    #006EA8;\n  --amber-t:   #8A5F00;\n  --pink-t:    #C8105A;\n  --purple-t:  #7C3AFF;\n  --on-bright: #14142B;\n}\n[data-theme=\"dark\"] {\n  --bg:       #07071A;\n  --bg2:      #0D0D28;\n  --surface:  #10102E;\n  --surface2: #18183C;\n  --text:     #EEEAFF;\n  --text2:    #8886AA;\n  --border:   rgba(124,58,255,0.28);\n  --shadow:   0 8px 40px rgba(124,58,255,0.30);\n  --shadow-sm:0 2px 12px rgba(124,58,255,0.20);\n  --mint-t:   var(--mint);\n  --blue-t:   var(--blue);\n  --amber-t:  var(--amber);\n  --pink-t:   var(--pink);\n  --purple-t: #9C7BFF;\n}\n*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\nbody {\n  font-family: 'Noto Sans', 'Noto Sans JP', 'Noto Sans KR', 'Noto Sans SC', sans-serif;\n  background: var(--bg);\n  color: var(--text);\n  min-height: 100vh;\n  min-height: 100dvh;\n  overflow-x: hidden;\n  transition: background .3s, color .3s;\n}\nbody::before {\n  content: '';\n  position: fixed; inset: 0;\n  background:\n    radial-gradient(ellipse 55% 55% at 15% 15%, rgba(124,58,255,.09) 0%, transparent 65%),\n    radial-gradient(ellipse 50% 50% at 85% 85%, rgba(255,45,135,.08) 0%, transparent 65%),\n    radial-gradient(ellipse 40% 40% at 70% 10%, rgba(0,214,143,.06) 0%, transparent 65%),\n    radial-gradient(ellipse 35% 35% at 20% 85%, rgba(0,180,255,.05) 0%, transparent 65%);\n  pointer-events: none;\n  z-index: 0;\n  transition: opacity .4s;\n}\n[data-theme=\"dark\"] body::before {\n  background:\n    radial-gradient(ellipse 55% 55% at 15% 15%, rgba(124,58,255,.18) 0%, transparent 65%),\n    radial-gradient(ellipse 50% 50% at 85% 85%, rgba(255,45,135,.14) 0%, transparent 65%),\n    radial-gradient(ellipse 40% 40% at 70% 10%, rgba(0,214,143,.10) 0%, transparent 65%),\n    radial-gradient(ellipse 35% 35% at 20% 85%, rgba(0,180,255,.08) 0%, transparent 65%);\n}\n.top-bar {\n  position: fixed; top: 0; left: 0; right: 0; height: 52px;\n  display: flex; align-items: center; justify-content: space-between;\n  padding: 0 20px; z-index: 200;\n  backdrop-filter: blur(16px) saturate(180%);\n  -webkit-backdrop-filter: blur(16px) saturate(180%);\n  background: rgba(255,255,255,0.75);\n  border-bottom: 1px solid var(--border);\n  transition: background .3s, border .3s;\n}\n[data-theme=\"dark\"] .top-bar { background: rgba(16,16,46,0.85); }\n.logo {\n  font-weight: 900; font-size: 1.15rem; letter-spacing: -.01em;\n  background: linear-gradient(135deg, var(--purple) 0%, var(--pink) 100%);\n  -webkit-background-clip: text; -webkit-text-fill-color: transparent;\n  background-clip: text;\n}\n.top-actions { display: flex; gap: 8px; align-items: center; }\n.icon-btn {\n  width: 34px; height: 34px; border-radius: 50%;\n  border: 1px solid var(--border); background: var(--surface2);\n  cursor: pointer; font-size: 1rem;\n  display: flex; align-items: center; justify-content: center;\n  transition: transform .2s, background .3s;\n}\n.icon-btn:hover { background: var(--bg2); }\n@media (hover: hover) {\n  .icon-btn:hover { transform: scale(1.1) rotate(12deg); }\n}\nbutton { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }\n.screen {\n  position: relative; z-index: 1;\n  min-height: 100vh;\n  min-height: 100dvh;\n  display: flex; flex-direction: column;\n  align-items: center; justify-content: center;\n  padding: 68px 16px calc(32px + env(safe-area-inset-bottom, 0px));\n}\n.hidden { display: none !important; }\n.panel {\n  background: var(--surface);\n  border: 1px solid var(--border);\n  border-radius: var(--radius);\n  box-shadow: var(--shadow);\n  padding: 28px 24px;\n  width: 100%; max-width: 580px;\n  transition: background .3s, border .3s, box-shadow .3s;\n}\n.stats-grid {\n  display: grid; grid-template-columns: repeat(3, 1fr);\n  gap: 12px; margin-bottom: 24px;\n}\n.stat-box {\n  background: var(--bg2); border: 1px solid var(--border);\n  border-radius: 14px; padding: 16px 12px; text-align: center;\n  transition: background .3s;\n}\n.stat-num {\n  font-size: 2rem; font-weight: 900; line-height: 1; margin-bottom: 4px;\n  background: linear-gradient(135deg, var(--purple), var(--pink));\n  -webkit-background-clip: text; -webkit-text-fill-color: transparent;\n  background-clip: text;\n}\n.stat-num.mint  { background: linear-gradient(135deg, var(--mint-t), var(--blue-t));\n                  -webkit-background-clip: text; background-clip: text; }\n.stat-num.amber { background: linear-gradient(135deg, var(--amber-t), var(--pink-t));\n                  -webkit-background-clip: text; background-clip: text; }\n.stat-label { font-size: .68rem; font-weight: 700; text-transform: uppercase;\n              letter-spacing: .08em; color: var(--text2); }\n.home-title { font-size: 1.3rem; font-weight: 900; margin-bottom: 4px; }\n.home-sub   { color: var(--text2); font-size: .85rem; margin-bottom: 20px; }\n.home-version { color: var(--text2); font-size: .72rem; text-align: center; margin-top: 14px; }\n.live-frame { display: block; width: 100%; height: 260px; border: 0; margin: 8px 0;\n  border-radius: 12px; background: #fff; }\n.fc-styled { display: block; max-width: 100%; margin: 8px 0; overflow: hidden;\n  contain: paint; border-radius: 12px; }\n.home-activity { text-align: center; font-size: .85rem; margin: 14px 0 2px; color: var(--text); }\n.forecast  { margin-top: 18px; }\n.forecast-head { display: flex; align-items: center; justify-content: space-between;\n  font-weight: 700; font-size: .85rem; margin-bottom: 6px; }\n.fc-toggle button { font: inherit; font-size: .75rem; padding: 3px 9px; cursor: pointer;\n  color: var(--text2); background: var(--surface2); border: 1px solid var(--border); }\n.fc-toggle button:first-child { border-radius: 8px 0 0 8px; }\n.fc-toggle button:last-child  { border-radius: 0 8px 8px 0; border-left: 0; }\n.fc-toggle button[aria-pressed=\"true\"] { color: var(--text); font-weight: 700;\n  background: var(--bg2); }\n.fc-bars { display: flex; align-items: flex-end; gap: 3px; height: 90px; }\n.fc-col  { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column;\n  justify-content: flex-end; align-items: center; }\n.fc-bar  { width: 100%; min-height: 2px; border-radius: 4px 4px 0 0; background: var(--border); }\n.fc-col.today .fc-bar { background: var(--accent, #7C3AFF); }\n.fc-col.has .fc-bar   { background: var(--text2); }\n.fc-col.today.has .fc-bar { background: var(--accent, #7C3AFF); }\n.fc-num  { font-size: .62rem; color: var(--text2); line-height: 1.3; min-height: 1em; }\n.fc-lbls { display: flex; gap: 3px; margin-top: 3px; }\n.fc-lbls span { flex: 1; min-width: 0; text-align: center; font-size: .6rem; color: var(--text2);\n  overflow: hidden; white-space: nowrap; }\n#inspectBtn { display: none; }\n#inspector  { display: none; }\n@media (min-width: 1180px) {\n  #inspectBtn { display: flex; }\n  body[data-screen=\"s-session\"].inspector-on #inspector {\n    display: block; position: fixed; z-index: 5; top: 64px; right: 16px; width: 250px;\n    max-height: calc(100vh - 80px); overflow-y: auto; padding: 12px 14px; font-size: .78rem;\n    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;\n    box-shadow: var(--shadow); color: var(--text);\n  }\n  body[data-screen=\"s-session\"].inspector-on #s-session { padding-right: 280px; }\n}\n.insp-title { font-weight: 700; margin-bottom: 8px; }\n.insp-row   { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;\n  border-bottom: 1px solid var(--border); }\n.insp-row span:first-child { color: var(--text2); }\n.insp-row span:last-child  { text-align: right; overflow-wrap: anywhere; }\n.insp-table { width: 100%; border-collapse: collapse; margin-top: 8px; }\n.insp-table th { text-align: left; font-weight: 600; color: var(--text2); }\n.insp-table th:not(:first-child), .insp-table td:not(:first-child) { text-align: right; }\n.w-field   { display: flex; align-items: center; justify-content: space-between; gap: 12px;\n  margin: 8px 0; font-size: .85rem; }\n.w-field input { width: 96px; box-sizing: border-box; padding: 6px 8px; text-align: right;\n  font: inherit; color: var(--text); background: var(--surface2);\n  border: 1px solid var(--border); border-radius: 10px; }\n.w-block   { margin: 18px 0; }\n.w-h       { font-weight: 700; margin-bottom: 6px; }\n.w-p       { font-size: .85rem; color: var(--text2); margin: 6px 0 10px; }\n.w-input   { width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 8px;\n  font: .8rem ui-monospace, Menlo, Consolas, monospace; color: var(--text);\n  background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; }\n.w-result  { font-size: .85rem; margin: 8px 0 12px; min-height: 1.2em; }\n.w-row     { display: flex; align-items: center; justify-content: space-between; gap: 8px;\n  font-size: .8rem; padding: 6px 0; border-bottom: 1px solid var(--border); }\n.w-row button { flex: none; }\n#update-banner {\n  position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 60;\n  display: flex; align-items: center; justify-content: space-between; gap: 12px;\n  padding: 10px 14px; border-radius: 14px; font-size: .85rem; color: var(--text);\n  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);\n}\n.update-hint { display: block; margin-top: 2px; font-size: .75rem; color: var(--text2); }\n.btn {\n  display: inline-flex; align-items: center; justify-content: center; gap: 6px;\n  padding: 13px 24px; border: none; border-radius: 100px;\n  font-family: inherit; font-weight: 700; font-size: .95rem;\n  cursor: pointer; white-space: nowrap;\n  transition: transform .15s, box-shadow .15s, opacity .15s, background .2s;\n}\n@media (hover: hover) {\n  .btn:hover:not(:disabled) { transform: translateY(-2px); }\n}\n.btn:active:not(:disabled) { transform: translateY(0) scale(.98); }\n.btn:disabled { opacity: .4; cursor: not-allowed; }\n.btn-block { width: 100%; }\n.btn-primary {\n  background: linear-gradient(135deg, var(--purple) 0%, #D4145F 100%);\n  color: #fff; box-shadow: 0 4px 20px rgba(124,58,255,.40);\n}\n.btn-secondary { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }\n.btn-hint {\n  background: transparent; color: var(--purple-t);\n  border: 1.5px solid var(--purple-t); padding: 10px 20px; font-size: .88rem;\n}\n.btn-hint:hover:not(:disabled) { background: rgba(124,58,255,.08); }\n.btn-flip {\n  background: linear-gradient(135deg, var(--amber) 0%, #FF8C00 100%);\n  color: var(--on-bright); box-shadow: 0 4px 16px rgba(255,184,0,.40);\n  padding: 10px 20px; font-size: .88rem;\n}\n.btn-skip {\n  background: transparent; color: var(--text2);\n  border: 1.5px dashed var(--border); padding: 10px 20px; font-size: .88rem;\n}\n.btn-skip:hover:not(:disabled) { background: rgba(124,58,255,.06); color: var(--text); }\n.skip-badge {\n  display: inline-flex; align-items: center; justify-content: center;\n  background: rgba(255,184,0,.18); color: var(--amber-t);\n  border-radius: 100px; font-size: .62rem; font-weight: 700;\n  padding: 1px 6px; margin-left: 5px; letter-spacing: .04em;\n}\n.btn-spell {\n  background: transparent; color: var(--mint-t);\n  border: 1.5px solid var(--mint-t); padding: 10px 20px; font-size: .88rem;\n}\n.btn-spell:hover:not(:disabled) { background: rgba(0,214,143,.08); }\n.rating-grid {\n  display: grid; grid-template-columns: repeat(5, 1fr);\n  gap: 8px; margin-top: 18px;\n}\n.btn-rate {\n  padding: 11px 6px; font-size: .8rem; font-weight: 700; min-height: 48px;\n  border-radius: 12px; color: #fff; border: none;\n  cursor: pointer; font-family: inherit;\n  transition: transform .15s, box-shadow .15s, outline .1s;\n  position: relative;\n}\n@media (hover: hover) {\n  .btn-rate:hover { transform: translateY(-2px) scale(1.03); }\n}\n.btn-rate:active { transform: scale(.97); }\n.btn-rate .interval-badge {\n  display: block; font-size: .75rem; font-weight: 400; margin-top: 2px;\n}\n.btn-again { background: #D4145F; box-shadow: 0 3px 14px rgba(212,20,95,.40); }\n.btn-recap {\n  background: #FFB000; color: var(--on-bright);\n  box-shadow: 0 3px 14px rgba(255,176,0,.40);\n}\n.btn-hard  {\n  background: #FF7A00; color: var(--on-bright);\n  box-shadow: 0 3px 14px rgba(255,122,0,.40);\n}\n.btn-good  { background: #7C3AFF; box-shadow: 0 3px 14px rgba(124,58,255,.40); }\n.btn-easy  {\n  background: #00A870; color: var(--on-bright);\n  box-shadow: 0 3px 14px rgba(0,168,112,.40);\n}\n.btn-rate.suggested {\n  outline: 3px solid var(--text);\n  outline-offset: 2px; transform: scale(1.06);\n}\n.rating-hint { text-align: center; font-size: .7rem; color: var(--text2); margin-top: 8px; }\n.progress-wrap { width: 100%; max-width: 860px; margin-bottom: 14px; }\n.progress-meta {\n  display: flex; justify-content: space-between; align-items: center;\n  font-size: .72rem; color: var(--text2); margin-bottom: 5px; font-weight: 600;\n}\n.progress-track { height: 5px; background: var(--bg2); border-radius: 100px; overflow: hidden; }\n.progress-fill {\n  height: 100%;\n  background: linear-gradient(90deg, var(--purple) 0%, var(--pink) 100%);\n  border-radius: 100px; transition: width .45s cubic-bezier(.4,0,.2,1);\n}\n.card-scene { width: 100%; max-width: 860px; perspective: 1200px; margin-bottom: 14px; }\n.card-3d {\n  width: 100%; min-height: clamp(420px, 62vh, 780px);\n  min-height: clamp(420px, 62dvh, 780px);\n  position: relative; transform-style: preserve-3d;\n  transition: transform .55s cubic-bezier(.4,0,.2,1);\n}\n.card-3d.flipped { transform: rotateY(180deg); }\n.card-face {\n  position: absolute; inset: 0;\n  backface-visibility: hidden; -webkit-backface-visibility: hidden;\n  background: var(--surface); border: 1px solid var(--border);\n  border-radius: var(--radius); box-shadow: var(--shadow);\n  padding: 24px 22px; overflow-y: auto;\n  min-height: clamp(420px, 62vh, 780px);\n  min-height: clamp(420px, 62dvh, 780px);\n  display: flex; flex-direction: column; transition: background .3s;\n}\n.card-face-back { transform: rotateY(180deg); }\n.card-meta {\n  font-size: .68rem; font-weight: 700; text-transform: uppercase;\n  letter-spacing: .09em; color: var(--text2); margin-bottom: 14px;\n  display: flex; align-items: center; justify-content: space-between;\n}\n.card-meta-tag {\n  background: linear-gradient(135deg, var(--purple), var(--pink));\n  -webkit-background-clip: text; -webkit-text-fill-color: transparent;\n  background-clip: text;\n}\n/* ── Title ── */\n.card-title {\n  font-size: 1.35rem; font-weight: 900; color: var(--text);\n  text-align: center; padding: 18px 0 10px;\n  letter-spacing: -.01em; line-height: 1.3;\n}\n.keywords-area {\n  flex: 1; display: flex; flex-wrap: wrap;\n  gap: 10px; align-content: flex-start; min-height: 80px;\n}\n.kw-pill {\n  padding: 7px 16px; border-radius: 100px;\n  font-weight: 700; font-size: .95rem;\n  animation: popIn .28s cubic-bezier(.34,1.56,.64,1) both;\n}\n.kw-pill.ghost {\n  background: var(--bg2) !important; color: transparent !important;\n  border: 1.5px dashed var(--border); animation: none; user-select: none;\n}\n/* ── Spell slot: ghost pill becomes an inline input ── */\n.kw-pill.spell-slot {\n  background: var(--bg2) !important;\n  border: 1.5px dashed var(--purple);\n  color: var(--text); -webkit-text-fill-color: var(--text);\n  font-weight: 700; font-size: 1rem; font-family: inherit;\n  outline: none; min-width: 80px; width: auto;\n  padding: 7px 16px; border-radius: 100px; animation: none;\n  transition: border-color .15s, background .15s;\n}\n.kw-pill.spell-slot::placeholder { color: var(--text2); opacity: .5; font-weight: 400; }\n.kw-pill.spell-slot:focus { border-color: var(--pink); border-style: solid; }\n.kw-pill.spell-slot.correct {\n  border-color: var(--mint); border-style: solid;\n  background: rgba(0,214,143,.08) !important;\n  color: var(--mint-t); -webkit-text-fill-color: var(--mint-t);\n}\n.kw-pill.spell-slot.wrong {\n  border-color: var(--pink); border-style: solid;\n  background: rgba(255,45,135,.08) !important;\n}\n[data-theme=\"dark\"] .kw-pill.spell-slot.correct {\n  color: var(--mint); -webkit-text-fill-color: var(--mint);\n}\n/* Accent colors for revealed pills */\n.kw-pill:nth-child(5n+1) { background:rgba(255,45,135,.12);  color:var(--pink-t); }\n.kw-pill:nth-child(5n+2) { background:rgba(124,58,255,.12);  color:var(--purple-t); }\n.kw-pill:nth-child(5n+3) { background:rgba(0,214,143,.12);   color:var(--mint-t); }\n.kw-pill:nth-child(5n+4) { background:rgba(255,184,0,.12);   color:var(--amber-t); }\n.kw-pill:nth-child(5n+5) { background:rgba(0,180,255,.12);   color:var(--blue-t); }\n[data-theme=\"dark\"] .kw-pill:nth-child(5n+3) { color:var(--mint); }\n[data-theme=\"dark\"] .kw-pill:nth-child(5n+4) { color:var(--amber); }\n[data-theme=\"dark\"] .kw-pill:nth-child(5n+5) { color:var(--blue); }\n@keyframes popIn {\n  from { transform: scale(.4) rotate(-10deg); opacity: 0; }\n  to   { transform: scale(1)  rotate(0deg);   opacity: 1; }\n}\n.front-actions {\n  display: flex; gap: 10px; justify-content: center;\n  margin-top: 18px; flex-wrap: wrap;\n}\n/* primary action on its own row, secondary actions share the row below */\n.front-actions .btn-flip { order: -1; flex: 1 1 100%; padding: 14px 24px; font-size: 1rem; }\n.front-actions .btn:not(.btn-flip) { flex: 1 1 0; min-width: 0; padding: 10px 12px; }\n.hint-status { text-align: center; font-size: .7rem; color: var(--text2); margin-top: 8px; }\n/* ── Spell result + actions ── */\n.spell-result {\n  display: none; text-align: center; font-size: .75rem;\n  color: var(--text2); margin-top: 6px;\n}\n.spell-actions {\n  display: none; gap: 8px; justify-content: center;\n  flex-wrap: wrap; margin-top: 8px;\n}\n.back-content {\n  flex: 1; overflow-y: auto; font-size: .93rem; line-height: 1.75; color: var(--text);\n}\n.back-content-text { white-space: pre-wrap; }\n.back-note { font-size: .75rem; color: var(--text2); margin-bottom: 8px; }\n.back-content img  { max-width:100%; border-radius:12px; margin:8px 0; display:block; }\n.back-content h1,.back-content h2,.back-content h3\n  { margin: .7em 0 .3em; color:var(--text); font-weight:900; }\n.back-content h1 { font-size:1.3em; }\n.back-content h2 { font-size:1.1em; }\n.back-content h3 { font-size:1em; }\n.back-content p  { margin-bottom:.7em; }\n.back-content ul,.back-content ol { padding-left: 1.4em; margin-bottom:.7em; }\n.back-content pre {\n  background: var(--bg2); padding: 12px 14px; border-radius: 10px;\n  overflow-x: auto; font-size: .82em; margin: .5em 0;\n}\n.back-content code {\n  font-family: monospace; background: var(--bg2);\n  padding: 1px 5px; border-radius: 4px; font-size: .85em;\n}\n.back-content blockquote {\n  border-left: 3px solid var(--purple); padding-left: 12px;\n  color: var(--text2); margin: .5em 0;\n}\n.back-content table { border-collapse: collapse; width: 100%; margin: .5em 0; }\n.back-content th,.back-content td {\n  padding: 6px 10px; border: 1px solid var(--border); font-size: .88em;\n}\n.back-content th { background: var(--bg2); font-weight: 700; }\n.complete-icon  { font-size: 4rem; line-height: 1; margin-bottom: 12px; }\n.complete-title { font-size: 2rem; font-weight: 900; margin-bottom: 6px; }\n.complete-sub   { color: var(--text2); font-size: .9rem; margin-bottom: 24px; }\n.complete-stats {\n  display: grid; grid-template-columns: repeat(3, 1fr);\n  gap: 10px; margin-bottom: 24px;\n}\n.cs-box { background: var(--bg2); border-radius: 12px; padding: 12px 8px; text-align: center; }\n.cs-num { font-size: 1.5rem; font-weight: 900; }\n.cs-lbl { font-size: .65rem; text-transform: uppercase;\n          letter-spacing: .07em; color: var(--text2); margin-top: 2px; }\n.spinner {\n  width: 44px; height: 44px; border: 4px solid var(--border);\n  border-top-color: var(--purple); border-radius: 50%;\n  animation: spin .75s linear infinite;\n}\n@keyframes spin { to { transform: rotate(360deg); } }\n.state-badge {\n  display: inline-block; padding: 2px 8px; border-radius: 100px;\n  font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing:.06em;\n}\n.badge-new      { background: rgba(0,180,255,.15); color: var(--blue-t); }\n.badge-learning { background: rgba(255,184,0,.15);  color: var(--amber-t); }\n.badge-review   { background: rgba(124,58,255,.15); color: var(--purple-t); }\n.badge-relearn  { background: rgba(255,45,135,.15); color: var(--pink-t); }\n.docs-link {\n  font-family: inherit; font-size: .75rem; font-weight: 600; color: var(--text2);\n  background: none; cursor: pointer;\n  text-decoration: none; padding: 6px 12px; border-radius: 100px;\n  border: 1px solid var(--border); transition: color .15s, background .15s;\n}\n.docs-link:hover { color: var(--purple-t); background: rgba(124,58,255,.08); }\n/* ── Save status pill (pending / failed saves) ── */\n.save-status {\n  position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);\n  padding: 6px 14px; border-radius: 100px; z-index: 300; display: none;\n  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow);\n  font-size: .75rem; font-weight: 600; color: var(--text2);\n  pointer-events: none;\n}\n.save-status.error { color: var(--pink); border-color: var(--pink); }\n#docs-modal {\n  position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column;\n  background: var(--bg);\n}\n.docs-bar {\n  flex: none; height: 52px; padding: 0 16px;\n  display: flex; align-items: center; justify-content: space-between;\n  border-bottom: 1px solid var(--border); font-weight: 700; font-size: .9rem;\n}\n#docs-content { flex: 1; display: flex; overflow: hidden; }\n.docs-loading { margin: auto; color: var(--text2); font-size: .85rem; }\n/* ── Undo, keyboard hints ── */\n.btn-undo {\n  font-family: inherit; font-size: .72rem; font-weight: 700; color: var(--text2);\n  background: none; border: none; border-radius: 100px; padding: 2px 8px; cursor: pointer;\n}\n.btn-undo:hover:not(:disabled) { color: var(--purple-t); background: rgba(124,58,255,.08); }\n.btn-undo:disabled { opacity: .4; cursor: default; }\n.k {\n  font-family: inherit; font-size: .66rem; font-weight: 700; opacity: .75;\n  border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-left: 6px;\n}\n.btn-rate .k {\n  position: absolute; top: 3px; left: 4px; margin: 0;\n  font-size: .6rem; padding: 0 3px;\n}\n@media (hover: none) { .k { display: none; } }\n@media (prefers-reduced-motion: reduce) {\n  *, *::before, *::after {\n    animation-duration: .01ms !important; animation-iteration-count: 1 !important;\n    transition-duration: .01ms !important;\n  }\n}\n@media (max-width: 640px) {\n  /* card fills the screen so the rating row sits in the thumb zone */\n  .card-3d, .card-face { min-height: max(380px, calc(100dvh - 176px)); }\n}\n@media (max-width: 420px) {\n  .rating-grid { gap: 6px; }          /* five columns on every phone */\n  .stats-grid  { grid-template-columns: repeat(3, 1fr); }\n  .panel, .card-face { padding: 18px 14px; }\n  .stat-num { font-size: 1.5rem; }\n  .btn-rate { padding: 9px 2px; font-size: .72rem; }\n}\n";
+// @sync-css-end
 // The app's own stylesheet, scoped to the card: html, body and :root become .fc-page.
 const PAGE_CSS = scopeCss(APP_CSS, '.fc-page') +
   '.fc-page{display:block;height:auto;min-height:0;overflow:visible;padding:12px;' +
@@ -37,6 +185,18 @@ const cardRoot = cardHost.attachShadow ? cardHost.attachShadow({ mode: 'open' })
 const liveBox = document.getElementById('live');
 const diag = document.getElementById('diag');
 let lastKey = '';
+// What the status line reports: is the script alive, is the sheet answering, and what.
+let polls = 0;
+let answers = 0;
+let lastDesc = 'nothing yet';
+let serverVersion = '';
+
+function showStatus() {
+  const libs = (typeof DOMPurify === 'undefined' ? ' · DOMPurify not loaded' : '') +
+    (typeof marked === 'undefined' ? ' · marked not loaded' : '');
+  document.getElementById('status').textContent = 'polls ' + polls + ' · answers ' + answers +
+    ' · last: ' + lastDesc + (serverVersion ? ' · script v' + serverVersion : '') + libs;
+}
 
 function showNote(text) {
   const note = document.getElementById('note');
@@ -45,7 +205,6 @@ function showNote(text) {
   cardHost.hidden = true;
   liveBox.hidden = true;
   liveBox.textContent = '';
-  diag.hidden = true;
   document.getElementById('meta').textContent = '';
 }
 
@@ -74,9 +233,8 @@ function showLive(res) {
   liveBox.appendChild(frame);
   setTimeout(() => {
     if (frame.isConnected && !frame.dataset.ready) {
-      diag.textContent = 'This live card did not start: the nested frame, its scripts ' +
-        'or postMessage may be blocked here.';
-      diag.hidden = false;
+      flashFail('This live card did not start: the nested frame, its scripts ' +
+        'or postMessage may be blocked here.');
     }
   }, liveWaitMs);
 }
@@ -88,11 +246,16 @@ window.addEventListener('message', e => {
       frame.contentWindow === e.source) {
     frame.dataset.ready = '1';
     diag.hidden = true;
+    diag.textContent = '';
     frame.style.height = Math.min(Math.max(Math.ceil(d.h), 40), 4000) + 'px';
   }
 });
 
 function show(res) {
+  answers += 1;
+  serverVersion = res.version || serverVersion;
+  lastDesc = res.error ? 'error' : res.note ? 'note' : 'row ' + res.row + ' ' + res.type;
+  showStatus();
   if (res.note) {
     showNote(res.note);
     lastKey = '';
@@ -103,6 +266,7 @@ function show(res) {
   lastKey = key;
   document.getElementById('note').hidden = true;
   diag.hidden = true;
+  diag.textContent = '';
   document.getElementById('meta').textContent = 'row ' + res.row + ' · ' + res.id + ' · ' + res.type;
   try {
     if (res.type === 'live') {
@@ -119,9 +283,11 @@ function show(res) {
 
 function poll() {
   if (document.hidden) return;
+  polls += 1;
+  showStatus();
   google.script.run
     .withSuccessHandler(show)
-    .withFailureHandler(err => show({ note: 'Error: ' + err.message }))
+    .withFailureHandler(err => show({ note: 'Error: ' + err.message, error: true }))
     .getActiveRowPreview();
 }
 

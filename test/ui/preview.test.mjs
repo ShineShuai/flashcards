@@ -1,14 +1,13 @@
 // Run: node test/ui/preview.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
-// Sidebar.html, evaluated like an Apps Script template with the shell read from
-// index.html, polling a stubbed getActiveRowPreview. A card is shown in a shadow root
-// of the page (no nested frame); only a live card gets a frame.
+// Sidebar.html (a static page: the renderer and stylesheet of index.html are copied
+// into it by tools/sync-preview.mjs), polling a stubbed getActiveRowPreview. A card
+// is shown in a shadow root of the page (no nested frame); only a live card gets a frame.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { JSDOM } from 'jsdom';
-import { loadCodeGs } from '../code.mjs';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { sleep } from './harness.mjs';
 
 const require = createRequire(import.meta.url);
@@ -16,11 +15,9 @@ const createDOMPurify = require('dompurify');
 const realMarked = require('marked');
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-// <?!= expr ?> printed raw, with `shell` in scope (what createTemplateFromFile does)
-const shell = loadCodeGs().api.appShell_();
+// The pinned marked/DOMPurify tags are replaced by the packages, injected below.
 const page = fs.readFileSync(path.join(root, 'Sidebar.html'), 'utf8')
-  .replace(/<\?!=([\s\S]*?)\?>/g, (_, expr) => new Function('shell', `return (${expr});`)(shell))
-  .replace(/<script[^>]*cdn\.jsdelivr\.net[^>]*><\/script>/g, '');   // injected below
+  .replace(/<script[^>]*cdn\.jsdelivr\.net[^>]*><\/script>/g, '');
 
 let failed = 0;
 async function test(name, fn) {
@@ -34,11 +31,12 @@ async function test(name, fn) {
 }
 
 // The sidebar with a scripted server: replies is a queue; an Error instance fails the call.
-function open(replies) {
+function open(replies, { silent = false } = {}) {
   const calls = [];
   const dom = new JSDOM(page, {
     runScripts: 'dangerously',
     pretendToBeVisual: true,
+    virtualConsole: new VirtualConsole(),
     url: 'https://example.test/',
     beforeParse(w) {
       w.DOMPurify = createDOMPurify(w);
@@ -48,6 +46,7 @@ function open(replies) {
         withFailureHandler: (f) => run(ok, f),
         getActiveRowPreview() {
           calls.push(Date.now());
+          if (silent) return;
           const next = replies.length > 1 ? replies.shift() : replies[0];
           setTimeout(() => (next instanceof Error ? bad(next) : ok(next)), 0);
         },
@@ -66,6 +65,7 @@ function open(replies) {
     live: () => $('live'),
     liveFrame: () => $('live').querySelector('iframe'),
     diag: () => $('diag'),
+    status: () => $('status').textContent,
     meta: () => $('meta').textContent,
     async poll() {
       w.poll();
@@ -73,12 +73,66 @@ function open(replies) {
     },
   };
 }
-const row = (type, content, n = 2) => ({ row: n, id: 'c' + n, title: 'T', type, content });
+const row = (type, content, n = 2) => ({ row: n, id: 'c' + n, title: 'T', type, content, version: '9.9' });
 
 await test('the CSS literal in the page has no raw "<" (it can not close a tag)', () => {
   const literal = page.split('\n').find((line) => line.startsWith('const APP_CSS'));
   assert.ok(literal.length > 1000, 'css present');
   assert.equal(literal.includes('<'), false);
+});
+
+await test('before the first answer the page says so, and the status line counts the polls', async () => {
+  const s = open([], { silent: true });
+  await sleep(15);
+  assert.match(s.note().textContent, /^Waiting for the first answer from the sheet/);
+  assert.equal(s.note().hidden, false);
+  assert.equal(s.status(), 'polls 1 · answers 0 · last: nothing yet');
+  assert.equal(s.diag().hidden, true);
+});
+
+await test('the status line shows what the sheet answered and the script version', async () => {
+  const s = open([{ note: 'x', version: '9.9' }]);
+  await sleep(15);
+  assert.equal(s.status(), 'polls 1 · answers 1 · last: note · script v9.9');
+  s.replies[0] = row('md', 'x', 4);
+  await s.poll();
+  assert.equal(s.status(), 'polls 2 · answers 2 · last: row 4 md · script v9.9');
+  s.replies[0] = new Error('boom');
+  await s.poll();
+  assert.match(s.status(), /answers 3 · last: error/);
+});
+
+await test('a script error shows as red text on the page, not as silence', async () => {
+  const s = open([{ note: 'x' }]);
+  await sleep(15);
+  assert.equal(s.diag().hidden, true);
+  s.w.dispatchEvent(new s.w.ErrorEvent('error', { message: 'boom', lineno: 7 }));
+  assert.equal(s.diag().hidden, false);
+  assert.equal(s.diag().textContent, 'Script error: boom (line 7)');
+  const rejection = new s.w.Event('unhandledrejection');
+  rejection.reason = new Error('later');
+  s.w.dispatchEvent(rejection);
+  assert.equal(s.diag().textContent, 'Script error: boom (line 7)\nScript error: later');
+  s.replies[0] = row('text', 'next', 3);                      // the next card clears it
+  await s.poll();
+  assert.equal(s.diag().hidden, true);
+  assert.equal(s.diag().textContent, '');
+});
+
+await test('missing libraries are named in the status line; text cards still show', async () => {
+  const s = open([row('text', 'plain')]);
+  await sleep(15);
+  assert.equal(s.status().includes('not loaded'), false);
+  const bare = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true,
+    virtualConsole: new VirtualConsole(), beforeParse(w) {
+      w.google = { script: { run: { withSuccessHandler(f) { return { withFailureHandler() {
+        return { getActiveRowPreview() { f(row('text', 'plain')); } }; } }; } } } };
+    } }).window;
+  await sleep(15);
+  assert.match(bare.document.getElementById('status').textContent,
+    / · DOMPurify not loaded · marked not loaded$/);
+  assert.equal(bare.document.getElementById('card').shadowRoot.querySelector('#back-content')
+    .textContent.trim(), 'plain');
 });
 
 await test('a note is shown while no card row is selected', async () => {

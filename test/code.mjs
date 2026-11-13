@@ -62,7 +62,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
       this.rich.clear();
     }
     getActiveRange() {
-      return new Range(this, this.active.r, this.active.c, 1, 1);
+      return this.active ? new Range(this, this.active.r, this.active.c, 1, 1) : null;
     }
     key(r, c) {
       return `${r},${c}`;
@@ -320,17 +320,15 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
       base64Encode: (s, cs) => Buffer.from(s, cs).toString('base64'),
     },
     HtmlService: {
-      createHtmlOutputFromFile: (n) => ({
-        getContent: () => fs.readFileSync(path.join(root, n + '.html'), 'utf8'),
-      }),
-      createTemplateFromFile: (n) => {
+      createHtmlOutputFromFile: (n) => {
         const page = {
           name: n,
+          getContent: () => fs.readFileSync(path.join(root, n + '.html'), 'utf8'),
           setTitle(t) { page.title = t; return page; },
           setWidth(w) { page.width = w; return page; },
           setHeight(h) { page.height = h; return page; },
         };
-        return { evaluate: () => page };
+        return page;
       },
     },
     ScriptApp: { getService: () => ({ getUrl: () => ctx.__url }) },
@@ -340,7 +338,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ` saveSettings, getVersion, APP_VERSION, getReviewLog, getWeightsHistory,` +
     ` getActivity, forecastFrom_, studyDayOf_, ROLLOVER_HOUR, FORECAST_DAYS,` +
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
-    ` tokenize_, sniffType_, thumbFormula_, imageFormula_, thumbFor_, appShell_, getActiveRowPreview,` +
+    ` tokenize_, sniffType_, imageFormula_, thumbFor_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
   return { api, ss, sheets, stats, Sheet, ctx, menu };
@@ -719,8 +717,6 @@ if (isMain) {
       x.style.color || (x.style.bold ? 'bold' : 'italic')]);
   };
   const svgDoc = '<svg viewBox="0 0 10 10"><circle r="4"/></svg>';
-  const b64Of = (formula) =>
-    Buffer.from(formula.slice(formula.indexOf('base64,') + 7, -2), 'base64').toString();
 
   test('onEdit styles back_content, fills a blank back_type, keeps a set one', () => {
     const env = toolSheet([
@@ -775,63 +771,50 @@ if (isMain) {
     assert.equal(runs(env, 2).length, 4, 'now styled as html');
   });
 
-  test('thumbnails: svg rows get an IMAGE data URI, others none, only with the column', () => {
+  // IMAGE takes http(s) URLs only: a data: URI is "not a valid url" in Sheets, so an SVG
+  // has no thumbnail; the preview shows it.
+  const pic = '<img src="https://e.test/a.png?x=1&amp;sz=w780" alt="d" style="display: block;">';
+  const picUrl = '=IMAGE("https://e.test/a.png?x=1&sz=w780")';
+
+  test('thumbnails: an html card that is one https <img> gets =IMAGE(url), others none', () => {
     const env = toolSheet([
-      { id: 'a', back_content: svgDoc, back_type: 'svg' },
+      { id: 'a', back_content: pic, back_type: 'html' },
       { id: 'b', back_content: '<b>x</b>', back_type: 'html' },
+      { id: 'c', back_content: svgDoc, back_type: 'svg' },
+      { id: 'd', back_content: svgDoc, back_type: 'html' },
     ], { thumb: true });
-    edit(env, 2, 4, 2);
-    const f = env.sheet.get(2, 17).formula;
-    assert.match(f, /^=IMAGE\("data:image\/svg\+xml;base64,[A-Za-z0-9+/=]+"\)$/);
-    assert.equal(b64Of(f), svgDoc.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"'));
-    assert.equal(env.sheet.get(3, 17), '');
+    edit(env, 2, 4, 4);
+    assert.equal(env.sheet.get(2, 17).formula, picUrl);
+    for (const r of [3, 4, 5]) {
+      assert.equal(env.sheet.get(r, 17), '', 'row ' + r);
+    }
     assert.equal(env.sheet.heights.get(2), 72);
-    env.sheet.put(2, 5, 'html');                      // typed html, but still an SVG document
-    edit(env, 2, 5);
-    assert.match(env.sheet.get(2, 17).formula, /^=IMAGE\("data:image\/svg\+xml;base64,/);
+    assert.equal(env.sheet.heights.get(3), undefined, 'rows without a thumbnail keep their height');
     env.sheet.put(2, 4, '<p>not a picture</p>');      // content that is no picture: thumbnail goes
     edit(env, 2, 4);
     assert.equal(env.sheet.get(2, 17), '');
-    const none = toolSheet([{ id: 'a', back_content: svgDoc, back_type: 'svg' }]);
+    const none = toolSheet([{ id: 'a', back_content: pic, back_type: 'html' }]);
     edit(none, 2, 4);
     assert.equal(none.stats.calls.setFormulas, undefined, 'no column, no thumbnails');
   });
 
-  test('thumbFormula_: non-svg, existing xmlns, size limit, UTF-8', () => {
-    const t = loadCodeGs().api.thumbFormula_;
-    assert.equal(t('<b>x</b>'), '');
-    assert.equal(t(''), '');
-    const kept = b64Of(t('<svg xmlns="http://www.w3.org/2000/svg"/>'));
-    assert.equal(kept.match(/xmlns/g).length, 1);
-    assert.equal(t('<svg>' + 'x'.repeat(40000) + '</svg>'), '', 'over 45 000 characters');
-    assert.equal(b64Of(t('<svg><text>桜😀</text></svg>')).includes('桜😀'), true);
-  });
-
-  test('thumbnails by content: an html card that is one https <img> gets =IMAGE(url)', () => {
+  test('imageFormula_ / thumbFor_: https only, one <img> only, no data URI, no SVG', () => {
     const api = loadCodeGs().api;
-    const drive = '<img src="https://drive.google.com/thumbnail?id=X&sz=w780" alt="d" ' +
-      'style="display: block;">';
-    assert.equal(api.imageFormula_(drive), '=IMAGE("https://drive.google.com/thumbnail?id=X&sz=w780")');
+    assert.equal(api.imageFormula_(pic), picUrl);
     assert.equal(api.imageFormula_("  <img alt='a' src='https://e.test/a&amp;b.png'/>\n"),
       '=IMAGE("https://e.test/a&b.png")', 'single quotes, &amp; decoded, trailing space');
     for (const no of ['', 'text', '<img src="http://e.test/a.png">', '<img src="data:image/png;base64,AA">',
-      '<p><img src="https://e.test/a.png"></p>', drive + drive, '<img data-src="https://e.test/a.png">',
-      '<img src="https://e.test/' + 'x'.repeat(2000) + '">']) {
+      '<p><img src="https://e.test/a.png"></p>', pic + pic, '<img data-src="https://e.test/a.png">',
+      '<img src="https://e.test/' + 'x'.repeat(2000) + '">', svgDoc]) {
       assert.equal(api.imageFormula_(no), '', no.slice(0, 40));
     }
-    assert.equal(api.thumbFor_('html', drive), api.imageFormula_(drive));
-    assert.match(api.thumbFor_('html', svgDoc), /^=IMAGE\("data:image\/svg\+xml;base64,/);
-    assert.match(api.thumbFor_('svg', svgDoc), /^=IMAGE\("data:image\/svg/);
-    assert.equal(api.thumbFor_('md', svgDoc), '', 'md and text show their source');
-    assert.equal(api.thumbFor_('text', drive), '');
-    assert.equal(api.thumbFor_('live', svgDoc), '');
-    const env = toolSheet([{ id: 'a', back_content: drive, back_type: 'html' },
-      { id: 'b', back_content: svgDoc, back_type: 'html' }], { thumb: true });
-    edit(env, 2, 4, 2);
-    assert.equal(env.sheet.get(2, 17).formula, api.imageFormula_(drive));
-    assert.match(env.sheet.get(3, 17).formula, /^=IMAGE\("data:image\/svg/);
-    assert.equal(env.sheet.heights.get(2), 72);
-    assert.equal(env.sheet.heights.get(3), 72);
+    assert.equal(api.thumbFor_('html', pic), picUrl);
+    for (const kind of ['svg', 'md', 'text', 'live', '']) {
+      assert.equal(api.thumbFor_(kind, pic), '', kind + ': shows its source or its own preview');
+    }
+    assert.equal(api.thumbFor_('svg', svgDoc), '');
+    assert.equal(api.thumbFor_('html', svgDoc), '');
+    assert.equal(typeof api.thumbFormula_, 'undefined', 'the data-URI formula is gone');
   });
 
   test('one edit restyles at most 500 rows; Highlight all covers the rest in chunks', () => {
@@ -859,22 +842,22 @@ if (isMain) {
   });
 
   test('addThumbnailColumn adds the header once after the last column and fills it', () => {
-    const env = toolSheet([{ id: 'a', back_content: svgDoc, back_type: 'svg' }]);
+    const env = toolSheet([{ id: 'a', back_content: pic, back_type: 'html' }]);
     const total = plain(env.api.addThumbnailColumn());
     assert.equal(env.sheet.get(1, 17), 'back_thumb');
     assert.equal(total.thumbs, 1);
-    assert.match(env.sheet.get(2, 17).formula, /^=IMAGE\(/);
+    assert.equal(env.sheet.get(2, 17).formula, picUrl);
     env.api.addThumbnailColumn();
     assert.equal(env.sheet.get(1, 18), '', 'no second column');
   });
 
   test('the app never receives back_thumb', () => {
-    const env = toolSheet([{ id: 'a', back_content: svgDoc, back_type: 'svg' }], { thumb: true });
+    const env = toolSheet([{ id: 'a', back_content: pic, back_type: 'html' }], { thumb: true });
     edit(env, 2, 4);
     const card = plain(env.api.bootstrap()).cards[0];
     assert.equal(card.id, 'a');
     assert.equal('back_thumb' in card, false);
-    assert.equal(card.back_content, svgDoc);
+    assert.equal(card.back_content, pic);
   });
 
   test('Flash menu: every item points at a function that exists', () => {
@@ -886,31 +869,27 @@ if (isMain) {
     }
   });
 
-  test('getActiveRowPreview: notes off the cards sheet or on the header, else the row', () => {
+  test('getActiveRowPreview: notes (saying what the script sees) or the row, always with the version', () => {
     const env = toolSheet([
       { id: 'a', title: 'T', back_content: '<b>x</b>', back_type: ' HTML ' },
       { id: 'b', back_content: 'plain', back_type: '' },
     ]);
+    const version = env.api.APP_VERSION;
     env.ctx.__active = env.sheet;
     env.sheet.active = { r: 2, c: 1 };
     assert.deepEqual(plain(env.api.getActiveRowPreview()),
-      { row: 2, id: 'a', title: 'T', type: 'html', content: '<b>x</b>' });
+      { row: 2, id: 'a', title: 'T', type: 'html', content: '<b>x</b>', version });
     env.sheet.active = { r: 3, c: 4 };
     assert.equal(env.api.getActiveRowPreview().type, 'text', 'blank type: text, like the app');
     env.sheet.active = { r: 1, c: 1 };
-    assert.match(env.api.getActiveRowPreview().note, /below the header/);
+    assert.deepEqual(plain(env.api.getActiveRowPreview()),
+      { note: 'Row 1 is the header. Select a card row below it.', version });
+    env.sheet.active = null;                           // getActiveRange() can be null
+    assert.match(env.api.getActiveRowPreview().note, /^No cell is selected/);
     env.ctx.__active = env.ss.insertSheet('other');
-    assert.match(env.api.getActiveRowPreview().note, /"cards" sheet/);
-  });
-
-  test('appShell_ takes css, pinned scripts and the render block from index.html', () => {
-    const shell = loadCodeGs().api.appShell_();
-    assert.match(shell.css, /\.back-content\s*\{/);
-    assert.equal((shell.scripts.match(/<script/g) || []).length, 2);
-    assert.match(shell.scripts, /marked@\d+\.\d+\.\d+\/lib\/marked\.umd\.js/);
-    assert.match(shell.scripts, /dompurify@\d+\.\d+\.\d+\/dist\/purify\.min\.js/);
-    assert.match(shell.render, /function renderHtml\(content, type\)/);
-    assert.equal(shell.render.includes('@render-begin'), false);
+    assert.equal(env.api.getActiveRowPreview().note,
+      'The active sheet is "other". Open the "cards" sheet and select a card row.');
+    assert.equal(env.api.getActiveRowPreview().version, version);
   });
 
   test('preview opens as sidebar or as a 640 px window, titled "Card preview"', () => {
@@ -920,7 +899,7 @@ if (isMain) {
     const [side, win] = env.menu.opened;
     assert.equal(side[0], 'sidebar');
     assert.equal(side[1].title, 'Card preview');
-    assert.equal(side[1].name, 'Sidebar');
+    assert.equal(side[1].name, 'Sidebar', 'one static page: no template, nothing read at run time');
     assert.deepEqual([win[0], win[1].width, win[1].height, win[2]],
       ['window', 640, 560, 'Card preview']);
   });
@@ -930,8 +909,8 @@ if (isMain) {
     assert.deepEqual(plain(env.api.checkSheetTools()), { offsetMismatches: 0 });
     const sheet = env.sheets.get('_flash_check');
     assert.match(sheet.get(1, 2), /^ok:/);
-    assert.match(sheet.get(2, 1).formula, /^=IMAGE\("data:image\/svg\+xml;base64,/);
-    assert.match(sheet.get(3, 1).formula, /^=IMAGE\("https:\/\/www\.gstatic\.com\//);
+    assert.match(sheet.get(2, 1).formula, /^=IMAGE\("https:\/\/www\.gstatic\.com\//);
+    assert.equal(sheet.get(3, 1), '', 'nothing with a data URI: IMAGE rejects them');
     env.api.checkSheetTools();                        // can be run again
     assert.match(sheet.get(1, 2), /^ok:/);
   });
