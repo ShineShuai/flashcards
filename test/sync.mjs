@@ -59,12 +59,16 @@ test('Sidebar.html is a static page: no template tags, no early end of a script'
   assert.doesNotThrow(() => new Function(scripts.join('\n;\n')), 'the scripts parse');
 });
 
-test('the error handler comes first, so a failure in any later script shows on the page', () => {
+test('the problem collector is the first script, before the libraries, so a load failure is caught', () => {
   const [first] = inlineScripts();
+  assert.match(first, /var flashProblems/);
   assert.match(first, /function flashFail\(/);
-  assert.match(first, /addEventListener\('error'/);
+  assert.match(first, /addEventListener\('error'[\s\S]*\}, true\)/, 'capturing: script load errors do not bubble');
   assert.match(first, /addEventListener\('unhandledrejection'/);
-  assert.ok(sidebar.indexOf('id="diag"') < sidebar.indexOf(first), 'the red text exists by then');
+  assert.match(first, /addEventListener\('securitypolicyviolation'/);
+  assert.ok(sidebar.indexOf(first) < sidebar.indexOf('<!-- @sync-scripts-begin -->'),
+    'before the marked/DOMPurify tags');
+  assert.ok(sidebar.indexOf('id="problems"') > 0 && sidebar.indexOf('id="hint"') > 0);
 });
 
 test('syncSidebar: rewrites the three regions, leaves the rest, is idempotent', () => {

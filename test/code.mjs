@@ -878,9 +878,13 @@ if (isMain) {
     env.ctx.__active = env.sheet;
     env.sheet.active = { r: 2, c: 1 };
     assert.deepEqual(plain(env.api.getActiveRowPreview()),
-      { row: 2, id: 'a', title: 'T', type: 'html', content: '<b>x</b>', version });
+      { row: 2, id: 'a', title: 'T', type: 'html', content: '<b>x</b>', sniffed: 'html', version });
     env.sheet.active = { r: 3, c: 4 };
     assert.equal(env.api.getActiveRowPreview().type, 'text', 'blank type: text, like the app');
+    assert.equal(env.api.getActiveRowPreview().sniffed, 'text', 'what the content looks like');
+    env.sheet.put(3, 4, '<svg viewBox="0 0 1 1"/>');           // blank type, SVG content
+    assert.deepEqual([env.api.getActiveRowPreview().type, env.api.getActiveRowPreview().sniffed],
+      ['text', 'svg']);
     env.sheet.active = { r: 1, c: 1 };
     assert.deepEqual(plain(env.api.getActiveRowPreview()),
       { note: 'Row 1 is the header. Select a card row below it.', version });

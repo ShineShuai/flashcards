@@ -65,6 +65,8 @@ function open(replies, { silent = false } = {}) {
     live: () => $('live'),
     liveFrame: () => $('live').querySelector('iframe'),
     diag: () => $('diag'),
+    problems: () => $('problems'),
+    hint: () => $('hint'),
     status: () => $('status').textContent,
     meta: () => $('meta').textContent,
     async poll() {
@@ -73,7 +75,9 @@ function open(replies, { silent = false } = {}) {
     },
   };
 }
-const row = (type, content, n = 2) => ({ row: n, id: 'c' + n, title: 'T', type, content, version: '9.9' });
+const row = (type, content, n = 2, sniffed = type) =>
+  ({ row: n, id: 'c' + n, title: 'T', type, content, sniffed, version: '9.9' });
+const LIBS = / · DOMPurify [\d.]+ · marked ok$/;
 
 await test('the CSS literal in the page has no raw "<" (it can not close a tag)', () => {
   const literal = page.split('\n').find((line) => line.startsWith('const APP_CSS'));
@@ -86,17 +90,19 @@ await test('before the first answer the page says so, and the status line counts
   await sleep(15);
   assert.match(s.note().textContent, /^Waiting for the first answer from the sheet/);
   assert.equal(s.note().hidden, false);
-  assert.equal(s.status(), 'polls 1 · answers 0 · last: nothing yet');
-  assert.equal(s.diag().hidden, true);
+  assert.match(s.status(), /^polls 1 · answers 0 · last: nothing yet/);
+  assert.match(s.status(), LIBS, 'both libraries loaded: their state is always shown');
+  assert.equal(s.problems().hidden, true);
+  assert.equal(s.hint().hidden, true);
 });
 
 await test('the status line shows what the sheet answered and the script version', async () => {
   const s = open([{ note: 'x', version: '9.9' }]);
   await sleep(15);
-  assert.equal(s.status(), 'polls 1 · answers 1 · last: note · script v9.9');
+  assert.match(s.status(), /^polls 1 · answers 1 · last: note · script v9\.9/);
   s.replies[0] = row('md', 'x', 4);
   await s.poll();
-  assert.equal(s.status(), 'polls 2 · answers 2 · last: row 4 md · script v9.9');
+  assert.match(s.status(), /^polls 2 · answers 2 · last: row 4 md · script v9\.9/);
   s.replies[0] = new Error('boom');
   await s.poll();
   assert.match(s.status(), /answers 3 · last: error/);
@@ -105,34 +111,73 @@ await test('the status line shows what the sheet answered and the script version
 await test('a script error shows as red text on the page, not as silence', async () => {
   const s = open([{ note: 'x' }]);
   await sleep(15);
-  assert.equal(s.diag().hidden, true);
+  assert.equal(s.problems().hidden, true);
   s.w.dispatchEvent(new s.w.ErrorEvent('error', { message: 'boom', lineno: 7 }));
-  assert.equal(s.diag().hidden, false);
-  assert.equal(s.diag().textContent, 'Script error: boom (line 7)');
+  assert.equal(s.problems().hidden, false);
+  assert.equal(s.problems().textContent, 'Script error: boom (line 7)');
   const rejection = new s.w.Event('unhandledrejection');
   rejection.reason = new Error('later');
   s.w.dispatchEvent(rejection);
-  assert.equal(s.diag().textContent, 'Script error: boom (line 7)\nScript error: later');
-  s.replies[0] = row('text', 'next', 3);                      // the next card clears it
+  assert.equal(s.problems().textContent, 'Script error: boom (line 7)\nScript error: later');
+  s.replies[0] = row('text', 'next', 3);                      // problems stay: they are not per card
   await s.poll();
-  assert.equal(s.diag().hidden, true);
-  assert.equal(s.diag().textContent, '');
+  assert.equal(s.problems().hidden, false);
 });
 
-await test('missing libraries are named in the status line; text cards still show', async () => {
-  const s = open([row('text', 'plain')]);
+await test('a script that fails to load, or a blocked request, is named in red', async () => {
+  const s = open([{ note: 'x' }]);
   await sleep(15);
-  assert.equal(s.status().includes('not loaded'), false);
+  const tag = s.w.document.createElement('script');
+  tag.src = 'https://cdn.example/lib.js';
+  s.w.document.head.appendChild(tag);
+  tag.dispatchEvent(new s.w.Event('error'));                  // does not bubble: the listener captures
+  const img = s.w.document.createElement('img');              // an image error is not a problem here
+  s.w.document.body.appendChild(img);
+  img.dispatchEvent(new s.w.Event('error'));
+  const violation = new s.w.Event('securitypolicyviolation');
+  Object.assign(violation, { effectiveDirective: 'script-src', blockedURI: 'https://cdn.example/x.js' });
+  s.w.document.dispatchEvent(violation);
+  assert.equal(s.problems().textContent,
+    'Could not load https://cdn.example/lib.js (blocked, offline or wrong hash)\n' +
+    'Blocked by the page policy (script-src): https://cdn.example/x.js');
+});
+
+await test('a card of type text that looks like html or svg says why it shows as source', async () => {
+  const s = open([row('text', '<img src="https://e.test/a.png">', 5, 'html')]);
+  await sleep(15);
+  assert.equal(s.hint().hidden, false);
+  assert.equal(s.hint().textContent,
+    'back_type is "text" (or blank), so the source is shown. The content looks like html: set back_type to html.');
+  assert.equal(s.back().textContent.trim(), '<img src="https://e.test/a.png">');
+  s.replies[0] = row('html', '<b>x</b>', 6, 'html');           // typed right: no hint
+  await s.poll();
+  assert.equal(s.hint().hidden, true);
+  s.replies[0] = row('text', 'plain words', 7, 'text');        // looks like text: no hint
+  await s.poll();
+  assert.equal(s.hint().hidden, true);
+  s.replies[0] = row('text', '<b>x</b>', 8, 'html');
+  await s.poll();
+  assert.equal(s.hint().hidden, false);
+  s.replies[0] = { note: 'gone' };                             // a note clears it
+  await s.poll();
+  assert.equal(s.hint().hidden, true);
+});
+
+await test('missing libraries are named: in the status line, and in red with what that means', async () => {
   const bare = new JSDOM(page, { runScripts: 'dangerously', pretendToBeVisual: true,
     virtualConsole: new VirtualConsole(), beforeParse(w) {
       w.google = { script: { run: { withSuccessHandler(f) { return { withFailureHandler() {
-        return { getActiveRowPreview() { f(row('text', 'plain')); } }; } }; } } } };
+        return { getActiveRowPreview() { f(row('html', '<b>x</b>')); } }; } }; } } } };
     } }).window;
   await sleep(15);
-  assert.match(bare.document.getElementById('status').textContent,
-    / · DOMPurify not loaded · marked not loaded$/);
-  assert.equal(bare.document.getElementById('card').shadowRoot.querySelector('#back-content')
-    .textContent.trim(), 'plain');
+  const doc = bare.document;
+  assert.match(doc.getElementById('status').textContent,
+    / · DOMPurify NOT LOADED · marked NOT LOADED$/);
+  assert.equal(doc.getElementById('problems').hidden, false);
+  assert.match(doc.getElementById('problems').textContent,
+    /^Cards of type md, html and svg are shown as source text: DOMPurify NOT LOADED, marked NOT LOADED\.$/);
+  const back = doc.getElementById('card').shadowRoot.querySelector('#back-content');
+  assert.match(back.textContent, /Sanitizer not loaded; showing the source\.\s*<b>x<\/b>/);
 });
 
 await test('a note is shown while no card row is selected', async () => {

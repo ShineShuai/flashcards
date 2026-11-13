@@ -5,6 +5,40 @@
 <meta charset="utf-8">
 <!-- The three regions between the @sync lines are copied from index.html by
      tools/sync-preview.mjs (pre-commit; CI checks it). Edit index.html, not them. -->
+<script>
+// First thing on the page, before the libraries load: everything that goes wrong is kept
+// here and shown in red (#problems) once the page exists: a script that did not load
+// (blocked, offline, wrong hash), a policy violation, an uncaught error.
+var flashProblems = [];
+function flashShow() {
+  var box = document.getElementById('problems');
+  if (box && flashProblems.length) {
+    box.hidden = false;
+    box.textContent = flashProblems.join('\n');
+  }
+}
+function flashFail(text) {
+  if (flashProblems.indexOf(text) < 0) {
+    flashProblems.push(text);
+  }
+  flashShow();
+}
+window.addEventListener('error', function (e) {
+  if (e.target && e.target !== window) {          // a resource: only scripts matter here
+    if (e.target.tagName === 'SCRIPT') {
+      flashFail('Could not load ' + e.target.src + ' (blocked, offline or wrong hash)');
+    }
+    return;
+  }
+  flashFail('Script error: ' + (e.message || 'unknown') + (e.lineno ? ' (line ' + e.lineno + ')' : ''));
+}, true);
+window.addEventListener('unhandledrejection', function (e) {
+  flashFail('Script error: ' + ((e.reason && e.reason.message) || e.reason));
+});
+document.addEventListener('securitypolicyviolation', function (e) {
+  flashFail('Blocked by the page policy (' + e.effectiveDirective + '): ' + e.blockedURI);
+});
+</script>
 <!-- @sync-scripts-begin -->
 <script src="https://cdn.jsdelivr.net/npm/marked@18.1.1/lib/marked.umd.js"
   integrity="sha384-rATToyt6602Jnq8c7w8HZwmyOUgPL7mzxX01FBWoV48ns/EgkakGozpES+PnaYOI"
@@ -18,7 +52,9 @@
   body { font: 13px/1.4 system-ui, sans-serif; color: #24292f; }
   #meta { padding: 6px 10px; border-bottom: 1px solid #d0d7de; color: #57606a; font-size: 12px; }
   #note, #diag { padding: 10px; color: #57606a; }
-  #diag { border-top: 1px solid #d0d7de; color: #b42318; white-space: pre-wrap; }
+  #diag, #problems { border-top: 1px solid #d0d7de; color: #b42318; white-space: pre-wrap; }
+  #problems { padding: 10px; }
+  #hint { padding: 6px 10px; background: #fff8c5; border-bottom: 1px solid #d4a72c; color: #3d2e00; font-size: 12px; }
   #status { padding: 6px 10px; border-top: 1px solid #d0d7de; color: #6e7781; font-size: 11px; }
   #card { overflow-x: auto; }
   .live-frame { display: block; width: 100%; height: 260px; border: 0; background: #fff; }
@@ -26,28 +62,15 @@
 </head>
 <body>
 <div id="meta"></div>
+<div id="hint" hidden></div>
 <div id="note">Waiting for the first answer from the sheet…</div>
 <!-- The card sits in a shadow root of this page, not in a nested frame: it needs no
      layout of its own and works where Apps Script does not let a nested frame show. -->
 <div id="card" hidden></div>
 <div id="live" hidden></div>
 <div id="diag" hidden></div>
+<div id="problems" hidden></div>
 <div id="status"></div>
-<script>
-// First, so that an error in any later script shows on the page instead of leaving it
-// silent: the note stays on "Waiting…" and the red text says why.
-function flashFail(text) {
-  var diag = document.getElementById('diag');
-  diag.hidden = false;
-  diag.textContent = (diag.textContent ? diag.textContent + '\n' : '') + text;
-}
-window.addEventListener('error', function (e) {
-  flashFail('Script error: ' + (e.message || 'unknown') + (e.lineno ? ' (line ' + e.lineno + ')' : ''));
-});
-window.addEventListener('unhandledrejection', function (e) {
-  flashFail('Script error: ' + ((e.reason && e.reason.message) || e.reason));
-});
-</script>
 <script>
 // @sync-render-begin
 // Card content -> HTML that is safe to inject. Types: text, md, html, svg; any
@@ -222,11 +245,33 @@ let answers = 0;
 let lastDesc = 'nothing yet';
 let serverVersion = '';
 
+// The libraries decide whether md, html and svg cards are drawn or shown as source.
+function libState() {
+  const purify = typeof DOMPurify === 'undefined' ? 'DOMPurify NOT LOADED'
+    : !DOMPurify.isSupported ? 'DOMPurify UNSUPPORTED here'
+    : 'DOMPurify ' + (DOMPurify.version || 'ok');
+  const md = typeof marked === 'undefined' ? 'marked NOT LOADED' : 'marked ok';
+  return { purify, md, ok: !/NOT|UNSUPPORTED/.test(purify + md) };
+}
+
 function showStatus() {
-  const libs = (typeof DOMPurify === 'undefined' ? ' · DOMPurify not loaded' : '') +
-    (typeof marked === 'undefined' ? ' · marked not loaded' : '');
+  const libs = libState();
   document.getElementById('status').textContent = 'polls ' + polls + ' · answers ' + answers +
-    ' · last: ' + lastDesc + (serverVersion ? ' · script v' + serverVersion : '') + libs;
+    ' · last: ' + lastDesc + (serverVersion ? ' · script v' + serverVersion : '') +
+    ' · ' + libs.purify + ' · ' + libs.md;
+}
+
+// A card whose type is text (or blank) but whose content looks like html, svg or md is
+// shown as source: say why, and what to set.
+function showHint(res) {
+  const hint = document.getElementById('hint');
+  const looks = res.sniffed;
+  const mismatch = res.type === 'text' && looks && looks !== 'text';
+  hint.hidden = !mismatch;
+  hint.textContent = mismatch
+    ? 'back_type is "text" (or blank), so the source is shown. The content looks like ' +
+      looks + ': set back_type to ' + looks + '.'
+    : '';
 }
 
 function showNote(text) {
@@ -264,8 +309,9 @@ function showLive(res) {
   liveBox.appendChild(frame);
   setTimeout(() => {
     if (frame.isConnected && !frame.dataset.ready) {
-      flashFail('This live card did not start: the nested frame, its scripts ' +
-        'or postMessage may be blocked here.');
+      diag.hidden = false;
+      diag.textContent = 'This live card did not start: the nested frame, its scripts ' +
+        'or postMessage may be blocked here.';
     }
   }, liveWaitMs);
 }
@@ -289,6 +335,7 @@ function show(res) {
   showStatus();
   if (res.note) {
     showNote(res.note);
+    document.getElementById('hint').hidden = true;
     lastKey = '';
     return;
   }
@@ -299,6 +346,7 @@ function show(res) {
   diag.hidden = true;
   diag.textContent = '';
   document.getElementById('meta').textContent = 'row ' + res.row + ' · ' + res.id + ' · ' + res.type;
+  showHint(res);
   try {
     if (res.type === 'live') {
       showLive(res);
@@ -322,6 +370,16 @@ function poll() {
     .getActiveRowPreview();
 }
 
+// Show what went wrong before this script ran (a library that did not load, ...), and
+// say outright when md, html and svg can not be drawn.
+{
+  const libs = libState();
+  if (!libs.ok) {
+    flashFail('Cards of type md, html and svg are shown as source text: ' + libs.purify +
+      ', ' + libs.md + '.');
+  }
+}
+flashShow();                                      // what failed before this script ran
 setInterval(poll, 1500);
 poll();
 </script>
