@@ -159,8 +159,9 @@ await test('the server URL is used; without one nothing is navigated and the hin
   assert.equal(env.banner(), true, 'the bar stays: the person reloads the tab');
 });
 
-await test('the page never reloads its own frame (the code has no location.reload)', async () => {
-  const src = fs.readFileSync(path.join(here, '..', '..', 'index.html'), 'utf8');
+await test('the page never reloads its own frame (no location.reload call in the code)', async () => {
+  const src = fs.readFileSync(path.join(here, '..', '..', 'index.html'), 'utf8')
+    .replace(/^\s*\/\/.*$/gm, '');                    // comments may name the call
   assert.equal(/location\.reload\s*\(/.test(src), false);
 });
 
