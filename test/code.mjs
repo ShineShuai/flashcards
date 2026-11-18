@@ -3,6 +3,8 @@
 // The Sheets model converts values written to non-text cells the way Sheets
 // does (ISO strings and "3/4" -> Date, numeric strings -> number, "=x" -> formula);
 // it is a model, not the real service.
+process.env.TZ ||= 'Europe/Berlin';
+
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -312,7 +314,16 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
         put: (k, v) => cache.set(k, v),
       }),
     },
+    Session: { getScriptTimeZone: () => process.env.TZ },
     Utilities: {
+      // only the 'Z' pattern (+0100), the one Code.gs uses
+      formatDate: (date, tz, pattern) => {
+        assert.equal(pattern, 'Z');
+        const zone = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'longOffset' })
+          .formatToParts(date).find((p) => p.type === 'timeZoneName').value;
+        const m = /GMT([+-])(\d\d):(\d\d)/.exec(zone);
+        return m ? m[1] + m[2] + m[3] : '+0000';
+      },
       DigestAlgorithm: { MD5: 'md5' },
       computeDigest: (alg, s) => [...crypto.createHash(alg).update(s).digest()],
       base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString('base64url'),
@@ -338,6 +349,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ` saveSettings, getVersion, APP_VERSION, getReviewLog, getWeightsHistory,` +
     ` getActivity, forecastFrom_, studyDayOf_, ROLLOVER_HOUR, FORECAST_DAYS,` +
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
+    ` rebuildHorizons, replayRecall_,` +
     ` tokenize_, sniffType_, imageFormula_, thumbFor_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
@@ -377,15 +389,16 @@ if (isMain) {
     return { ...env, sheet, headers, put };
   }
 
-  test('new sheet has title, 16 columns and text formats below the header', () => {
+  test('new sheet has title, 19 columns and text formats below the header', () => {
     const env = loadCodeGs();
     env.api.setupSheet();
     const sheet = env.sheets.get('cards');
     assert.deepEqual([...env.api.HEADERS].slice(0, 3), ['id', 'title', 'keywords']);
     assert.equal(sheet.get(1, 2), 'title');
-    assert.equal(env.api.HEADERS.length, 16);
+    assert.equal(env.api.HEADERS.length, 19);
     assert.equal(sheet.fmt.get('2,3'), '@');                    // keywords
     assert.equal(sheet.fmt.get('1000,14'), '@');                // last_review
+    assert.equal(sheet.fmt.get('1000,19'), '@');                // trail
     assert.equal(sheet.fmt.get('1,3'), undefined);              // header row untouched
     assert.ok(env.sheets.get('review_log'));
   });
@@ -463,7 +476,7 @@ if (isMain) {
     env.api.updateCard('a', fsrsFor());
     assert.equal(env.stats.locks, 1);
     const headers = env.sheet.getRange(1, 1, 1, 20).getValues()[0].filter(Boolean);
-    assert.equal(headers.length, 3 + 11);
+    assert.equal(headers.length, 3 + 14);
     assert.equal(new Set(headers).size, headers.length);
     env.api.updateCard('a', fsrsFor({ reps: 5 }));
     assert.equal(env.stats.locks, 1, 'no lock once the columns exist');
@@ -844,11 +857,12 @@ if (isMain) {
   test('addThumbnailColumn adds the header once after the last column and fills it', () => {
     const env = toolSheet([{ id: 'a', back_content: pic, back_type: 'html' }]);
     const total = plain(env.api.addThumbnailColumn());
-    assert.equal(env.sheet.get(1, 17), 'back_thumb');
+    const next = env.api.HEADERS.length + 1;
+    assert.equal(env.sheet.get(1, next), 'back_thumb');
     assert.equal(total.thumbs, 1);
-    assert.equal(env.sheet.get(2, 17).formula, picUrl);
+    assert.equal(env.sheet.get(2, next).formula, picUrl);
     env.api.addThumbnailColumn();
-    assert.equal(env.sheet.get(1, 18), '', 'no second column');
+    assert.equal(env.sheet.get(1, next + 1), '', 'no second column');
   });
 
   test('the app never receives back_thumb', () => {
@@ -863,7 +877,7 @@ if (isMain) {
   test('Flash menu: every item points at a function that exists', () => {
     const env = loadCodeGs();
     env.api.onOpen();
-    assert.deepEqual(env.menu.items.map((i) => i[0]), Array(5).fill('Flash'));
+    assert.deepEqual(env.menu.items.map((i) => i[0]), Array(6).fill('Flash'));
     for (const [, , fn] of env.menu.items) {
       assert.equal(vm.runInContext('typeof ' + fn, env.ctx), 'function', fn);
     }
@@ -1178,6 +1192,155 @@ if (isMain) {
     assert.deepEqual(newLimit, { limit: 0, introduced: 0, remaining: 0 });
     assert.deepEqual(forecast, new Array(30).fill(0));
     assert.equal(config.retention, 0.94);
+  });
+
+  // ── recall record: ok_days, fail_days, trail ─────────────────────────────
+  test('updateCard writes the recall record; trail stays text; an empty value clears', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', fail_days: 77 });
+    const col = (h) => env.headers.indexOf(h) + 1;
+    env.api.updateCard('a', fsrsFor({ ok_days: 32, fail_days: '', trail: '1:G 4:G 12:H' }));
+    assert.equal(env.sheet.get(2, col('ok_days')), 32);
+    assert.equal(env.sheet.get(2, col('fail_days')), '', 'a beaten failure is cleared');
+    assert.equal(env.sheet.get(2, col('trail')), '1:G 4:G 12:H');
+    assert.equal(env.sheet.fmt.get('2,' + col('trail')), '@');
+    env.api.updateCard('a', fsrsFor());                          // an older app: no record fields
+    assert.equal(env.sheet.get(2, col('trail')), '1:G 4:G 12:H', 'other fields are left alone');
+  });
+
+  const D0 = Date.UTC(2026, 0, 5, 10);
+  const logRow = (days, id, rating, before) => [
+    new Date(D0 + days * 86400000).toISOString(), id, rating, before,
+  ];
+  const putLog = (env, rows) => {
+    const log = env.ss.insertSheet('review_log');
+    ['review_time', 'card_id', 'rating', 'state_before'].forEach((h, i) => log.raw(1, i + 1, h));
+    rows.forEach((row, r) => row.forEach((v, c) => log.raw(r + 2, c + 1, v)));
+    return log;
+  };
+
+  const env0 = () => loadCodeGs();
+
+  test('replayRecall_: gap and outcome per Review-state review; a beaten failure clears', () => {
+    const rows = [
+      logRow(0, 'a', 3, 0), logRow(0.05, 'a', 3, 1),         // learning steps: not counted
+      logRow(1, 'a', 3, 2), logRow(4, 'a', 3, 2),            // gaps 1, 3
+      logRow(12, 'a', 2, 2),                                 // Hard at 8
+      logRow(17, 'a', 3, 2),                                 // Good at 5 < 8: failure stands
+      logRow(25, 'a', 3, 2),                                 // Good at 8 = 8: beaten
+      logRow(46, 'a', 1.5, 2), logRow(47, 'a', 1, 2),        // Recap at 21, Again at 1
+      logRow(47.01, 'a', 3, 3), logRow(47.2, 'a', 3, 2),     // relearning step, same-day review
+      logRow(3, 'b', 3, 2),                                  // first logged review: no gap yet
+      logRow(0, 'd', 3, 0), logRow(1, 'd', 3, 1),            // a learning step a day later
+      logRow(3, 'd', 3, 2), logRow(5, 'd', 1, 2),            // Good at 2, Again at 2
+      logRow(6, 'd', 3, 3), logRow(9, 'd', 3, 2),            // a relearning step a day later
+      logRow(0, 'e', 3, 2), logRow(2, 'e', 3, 2),            // Good at 2
+      logRow(10, 'e', 2, 2), logRow(18, 'e', 3, 2),          // Hard at 8, Good at 8: beaten
+      logRow(21, 'e', 3, 2),                                 // Good at 3: ok_days stays 8
+    ];
+    const res = env0().api.replayRecall_(rows, 0);
+    const a = res.cards.a;
+    assert.equal(a.trail.join(' '), '1:G 3:G 8:H 5:G 8:G 21:R 1:A');
+    assert.equal(a.ok, 8);
+    assert.equal(a.fail, 1);
+    assert.equal(res.cards.b.trail.length, 0);
+    const d = res.cards.d;
+    assert.equal(d.trail.join(' '), '2:G 2:A 3:G', 'steps in state 1 and 3 do not count');
+    const e = res.cards.e;
+    assert.equal(e.trail.join(' '), '2:G 8:H 8:G 3:G');
+    assert.equal(e.ok, 8, 'ok_days is the longest gap, not the latest');
+    assert.equal(e.fail, 0, 'a Good at exactly the failed gap beats it');
+    assert.equal(res.counted, 7 + 3 + 4);
+  });
+
+  test('app and log replay build the same record (cap, clearing, late reviews)', () => {
+    const html = fs.readFileSync(path.join(here, '..', 'index.html'), 'utf8');
+    const block = html.match(/\/\/ @fsrs-begin([\s\S]*?)\/\/ @fsrs-end/)[1];
+    const clock = { t: D0 };
+    class FakeDate extends Date {
+      constructor(...args) {
+        if (args.length) {
+          super(...args);
+        } else {
+          super(clock.t);
+        }
+      }
+    }
+    const app = vm.runInContext(`${block}\n({ scheduleCard, recallRecord })`,
+      vm.createContext({ Date: FakeDate, Math }));
+    // [rating, days since the previous review]; learning steps are minutes apart
+    const plan = [
+      [3, 0], [3, 0.05], [3, 1], [3, 4], [3, 12], [2, 32], [3, 20], [1.5, 40], [3, 30],
+      [3, 25], [1, 60], [3, 0.01], [3, 2], [4, 5], [3, 9], [2, 14], [3, 11], [3, 20],
+      [3, 20], [3, 30],
+    ];
+    let card = { state: 0 };
+    const rows = [];
+    plan.forEach(([rating, wait]) => {
+      clock.t += wait * 86400000;
+      const before = card.state;
+      const fsrs = app.scheduleCard(card, rating, 0);
+      const record = app.recallRecord(card, rating, new Date(fsrs.last_review));
+      rows.push([fsrs.last_review, 'c', rating, before]);
+      card = { ...card, ...fsrs, ...record };
+    });
+    const got = env0().api.replayRecall_(rows).cards.c;
+    assert.equal(got.trail.length, 8, 'the trail keeps the newest 8');
+    assert.equal(got.trail.join(' '), card.trail);
+    assert.equal(got.ok, Number(card.ok_days) || 0);
+    assert.equal(got.fail, Number(card.fail_days) || 0);
+  });
+
+  test('rebuildHorizons fills only cards with counted reviews; re-run is stable', () => {
+    const env = fixture();
+    env.put(2, { id: 'a' });
+    env.put(3, { id: 'b', trail: '7:G', ok_days: 7 });          // no log: kept
+    env.put(4, { id: 'c' });                                    // learning steps only
+    putLog(env, [
+      logRow(0, 'a', 3, 0), logRow(0.05, 'a', 3, 1), logRow(1, 'a', 3, 2), logRow(5, 'a', 2, 2),
+      logRow(0, 'c', 3, 0), logRow(0.05, 'c', 3, 1),
+    ]);
+    const col = (h) => env.headers.indexOf(h) + 1;
+    const first = { ...env.api.rebuildHorizons(0) };
+    assert.deepEqual(first, { cards: 3, written: 1, reviews: 2 });
+    assert.equal(env.sheet.get(2, col('trail')), '1:G 4:H');
+    assert.equal(env.sheet.get(2, col('ok_days')), 1);
+    assert.equal(env.sheet.get(2, col('fail_days')), 4);
+    assert.equal(env.sheet.fmt.get('2,' + col('trail')), '@');
+    assert.equal(env.sheet.get(3, col('trail')), '7:G');
+    assert.equal(env.sheet.get(3, col('ok_days')), 7);
+    assert.equal(env.sheet.get(4, col('trail')), '', 'no counted review: untouched');
+    const second = { ...env.api.rebuildHorizons(0) };
+    assert.deepEqual(second, first);
+    assert.equal(env.sheet.get(2, col('trail')), '1:G 4:H');
+  });
+
+  test('rebuildHorizons adds missing columns; no log or no cards writes nothing', () => {
+    const env = fixture(['id', 'title']);
+    env.put(2, { id: 'a' });
+    assert.deepEqual({ ...env.api.rebuildHorizons(0) }, { cards: 1, written: 0, reviews: 0 });
+    const heads = env.sheet.getRange(1, 1, 1, 6).getValues()[0];
+    assert.deepEqual(heads.slice(2, 5), ['ok_days', 'fail_days', 'trail']);
+    const empty = loadCodeGs();
+    assert.deepEqual({ ...empty.api.rebuildHorizons(0) }, { cards: 0, written: 0, reviews: 0 });
+  });
+
+  test('rebuildHorizons: the script time zone sets the study day (daylight saving)', () => {
+    const was = process.env.TZ;
+    process.env.TZ = 'Europe/Berlin';
+    try {
+      // 23:30 CET, then 04:30 CEST the next morning (clocks went forward in between):
+      // two study days apart by the local clock. With the winter offset the second review
+      // would still be before the 04:00 rollover (03:30) and fall on the same study day.
+      const rows = [
+        ['2026-03-28T22:30:00.000Z', 'a', 3, 2],
+        ['2026-03-29T02:30:00.000Z', 'a', 3, 2],
+      ];
+      assert.equal(env0().api.replayRecall_(rows).cards.a.trail.join(' '), '1:G');
+      assert.equal(env0().api.replayRecall_(rows, 60).cards.a.trail.length, 0);
+    } finally {
+      process.env.TZ = was;
+    }
   });
 
   console.log(failed ? `\n${failed} failed` : '\nall passed');

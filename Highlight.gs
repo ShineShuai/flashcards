@@ -422,6 +422,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Highlight all back_content', 'highlightAll')
     .addItem('Add picture thumbnail column', 'addThumbnailColumn')
+    .addItem('Rebuild recall history', 'rebuildHorizonsMenu')
     .addItem('Check sheet tools', 'checkSheetTools')
     .addToUi();
 }

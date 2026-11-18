@@ -505,6 +505,36 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   pointer-events: none;
 }
 .save-status.error { color: var(--pink); border-color: var(--pink); }
+.rate-toast {
+  position: fixed; bottom: 50px; left: 50%; transform: translateX(-50%);
+  max-width: calc(100vw - 24px); padding: 6px 14px; border-radius: 100px; z-index: 300;
+  display: none; background: var(--surface); border: 1px solid var(--border);
+  box-shadow: var(--shadow); font-size: .78rem; font-weight: 700; color: var(--text);
+  pointer-events: none;
+}
+.rate-toast.on { display: block; }
+.recall-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  margin: -4px 0 12px; font-size: .72rem; line-height: 1.5; color: var(--text2);
+}
+.recall-strip:empty { display: none; }
+.rs-now   { font-weight: 700; color: var(--text); }
+.rs-trail { display: flex; flex-wrap: wrap; gap: 4px; }
+.rs-chip  {
+  padding: 0 8px; border-radius: 100px; font-weight: 700; background: var(--bg2);
+}
+.rs-chip.ok   { color: var(--mint-t); }
+.rs-chip.weak { color: var(--amber-t); }
+.rs-chip.bad  { color: var(--pink-t); }
+.rs-best { color: var(--mint-t); }
+.rs-fail { color: var(--pink-t); }
+@media (max-width: 480px) {
+  /* one row that scrolls sideways: the strip never takes more than one line of the card */
+  .recall-strip { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .recall-strip::-webkit-scrollbar { display: none; }
+  .recall-strip > *, .rs-chip { flex: none; white-space: nowrap; }
+  .rs-trail { flex-wrap: nowrap; }
+}
 #docs-modal {
   position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column;
   background: var(--bg);
@@ -636,6 +666,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
             <span id="state-badge" class="state-badge badge-new">New</span>
           </span>
         </div>
+        <div class="recall-strip" role="group" aria-label="Recall status"></div>
         <div class="card-title" id="card-title"></div>
         <div class="keywords-area" id="kw-area"></div>
         <div class="front-actions">
@@ -672,6 +703,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
           <span id="back-type-badge" class="card-meta-tag">text</span>
         </div>
         <div class="back-content" id="back-content"></div>
+        <div class="recall-strip" role="group" aria-label="Recall status"></div>
         <div class="rating-grid">
           <button class="btn-rate btn-again" onclick="rate(1)">
             Again<span class="interval-badge" id="int-1"></span><kbd class="k">1</kbd>
@@ -792,6 +824,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 </div>
 
 <div class="save-status" id="save-status" role="status" aria-live="polite"></div>
+<div class="rate-toast" id="rate-toast" role="status" aria-live="polite"></div>
 
 <script>
 let _docsBlobUrl = null;
@@ -1046,6 +1079,53 @@ function shownToRating(shown, total) {
   if (shown <= total * 0.5)   return 1.5; // Recap
   return 1;                               // Again
 }
+
+// Recall record: what each Review-state review says about when the card is forgotten.
+// A review counts with its gap (study days since the previous review) and outcome.
+//   trail      the newest TRAIL_LEN reviews as "gap:code", oldest first; codes
+//              A R H G E = Again, Recap, Hard, Good, Easy
+//   ok_days    longest gap recalled without trouble (Good or Easy)
+//   fail_days  gap of the last Hard, Recap or Again; cleared once a Good or Easy
+//              comes at that gap or later (the failure is beaten)
+// Learning steps and same-day reviews do not count. Code.gs (replayRecall_) rebuilds
+// the same record from the review log: keep both rules equal.
+const TRAIL_LEN = 8;
+const TRAIL_CODES = { 1: 'A', 1.5: 'R', 2: 'H', 3: 'G', 4: 'E' };
+function parseTrail(text) {
+  return String(text || '').split(/\s+/)
+    .map(part => /^(\d+):([ARHGE])$/.exec(part))
+    .filter(Boolean)
+    .map(m => ({ gap: Number(m[1]), code: m[2] }));
+}
+// The fields to save with a review of `card` made at `now`; {} when it does not count.
+// Call it before the card takes over the new schedule (card.last_review is the old one).
+function recallRecord(card, rating, now) {
+  const code = TRAIL_CODES[rating];
+  const last = card.last_review ? new Date(card.last_review) : null;
+  if (Number(card.state) !== 2 || !code || !last || isNaN(last.getTime())) {
+    return {};
+  }
+  const gap = daysBetween(last, now);
+  if (gap < 1) {
+    return {};
+  }
+  let ok   = Number(card.ok_days) || 0;
+  let fail = Number(card.fail_days) || 0;
+  if (rating >= 3) {
+    ok = Math.max(ok, gap);
+    if (fail && gap >= fail) {
+      fail = 0;
+    }
+  } else {
+    fail = gap;
+  }
+  const trail = parseTrail(card.trail).concat({ gap: gap, code: code }).slice(-TRAIL_LEN);
+  return {
+    ok_days:   ok || '',
+    fail_days: fail || '',
+    trail:     trail.map(t => t.gap + ':' + t.code).join(' ')
+  };
+}
 // @fsrs-end
 const DEFAULT_W = W.slice();                  // the built-in defaults, before any config
 const DEFAULT_RETENTION    = DESIRED_RETENTION;
@@ -1204,7 +1284,8 @@ const HOME_CACHE_MS = 5 * 60 * 1000;
 // Fields a review changes; a snapshot of them makes the last rating undoable
 const FSRS_KEYS = [
   'stability', 'difficulty', 'elapsed_days', 'scheduled_days', 'reps', 'lapses',
-  'state', 'last_review', 'due', 'weak_keywords', 'miss_streak'
+  'state', 'last_review', 'due', 'weak_keywords', 'miss_streak',
+  'ok_days', 'fail_days', 'trail'
 ];
 let lastRating = null;   // { card, prev, rating, at, requeued, undoneTime }
 const SAVE_WAIT_MS  = 8000;   // max wait for pending saves before reading from the server
@@ -1454,6 +1535,7 @@ function loadCard(i) {
     renderBack(card);
   }
   renderIntervalPreviews(card);
+  renderRecallStrip(card);
   clearSuggestion();
   cardShownAt = Date.now();
 }
@@ -1758,6 +1840,91 @@ function renderIntervalPreviews(card) {
   renderInspector(card, streak);
 }
 
+// ── Recall strip: the card's recall record, above the title and above the ratings ──
+const TRAIL_TEXT  = { A: 'A', R: 'R', H: 'H', G: '✓', E: '✓✓' };
+const TRAIL_NAMES = { A: 'Again', R: 'Recap', H: 'Hard', G: 'Good', E: 'Easy' };
+const TRAIL_CLASS = { A: 'bad', R: 'weak', H: 'weak', G: 'ok', E: 'ok' };
+
+function stripPart(className, text, title) {
+  const el = document.createElement('span');
+  el.className = className;
+  el.textContent = text;
+  if (title) {
+    el.title = title;
+  }
+  return el;
+}
+// Review state only: the gap since the last review and the recall probability now.
+function recallNow(card) {
+  const last = card.last_review ? new Date(card.last_review) : null;
+  const s = Number(card.stability);
+  if (Number(card.state) !== 2 || !last || isNaN(last.getTime()) || !(s > 0)) {
+    return '';
+  }
+  const gap = daysBetween(last, new Date());
+  const planned = Number(card.scheduled_days);
+  let text = 'gap ' + gap + ' d · recall now ' + Math.round(100 * forgettingCurve(gap, s)) + '%';
+  if (planned >= 1 && planned !== gap) {
+    text += ' · planned ' + Math.round(planned) + ' d';
+  }
+  return text;
+}
+function buildRecallStrip(card) {
+  const frag = document.createDocumentFragment();
+  const now = recallNow(card);
+  const trail = parseTrail(card.trail);
+  const ok = Number(card.ok_days) || 0;
+  const fail = Number(card.fail_days) || 0;
+  if (now) {
+    frag.appendChild(stripPart('rs-now', now));
+  }
+  if (trail.length) {
+    const box = document.createElement('span');
+    box.className = 'rs-trail';
+    trail.forEach(t => {
+      box.appendChild(stripPart('rs-chip ' + TRAIL_CLASS[t.code],
+        t.gap + ' ' + TRAIL_TEXT[t.code], 'gap ' + t.gap + ' d: ' + TRAIL_NAMES[t.code]));
+    });
+    frag.appendChild(box);
+  }
+  if (ok) {
+    frag.appendChild(stripPart('rs-best', 'best ✓ ' + ok + ' d', 'longest gap recalled'));
+  }
+  if (fail) {
+    frag.appendChild(stripPart('rs-fail', 'failed ✗ ' + fail + ' d',
+      'gap at the last Hard, Recap or Again'));
+  }
+  return frag;
+}
+function renderRecallStrip(card) {
+  document.querySelectorAll('.recall-strip').forEach(el => {
+    el.textContent = '';
+    el.appendChild(buildRecallStrip(card));
+  });
+}
+
+// ── Outcome of a rating, shown briefly: "Hard at 77 d → next 134 d" ──
+const RATE_TOAST_MS = 4000;
+let rateToastTimer = null;
+function hideRateToast() {
+  clearTimeout(rateToastTimer);
+  document.getElementById('rate-toast').classList.remove('on');
+}
+function showRateToast(rating, fsrs, record) {
+  const row = RATING_ROWS.find(r => r[0] === rating);
+  const trail = parseTrail(record.trail);
+  let text = row ? row[1] : '';
+  if (trail.length) {
+    text += ' at ' + trail[trail.length - 1].gap + ' d';
+  }
+  text += ' → next ' + formatInterval(fsrs.scheduled_days);
+  const el = document.getElementById('rate-toast');
+  el.textContent = text;
+  el.classList.add('on');
+  clearTimeout(rateToastTimer);
+  rateToastTimer = setTimeout(hideRateToast, RATE_TOAST_MS);
+}
+
 // ── Controls ───────────────────────────────────────────────────────────────
 function revealHint() {
   if (shownCount >= shuffledKw.length) return;
@@ -1869,6 +2036,8 @@ function rate(rating) {
   const fsrs = scheduleCard(card, rating, missStreak);
   fsrs.weak_keywords = missed.join(';');
   fsrs.miss_streak   = missStreak;
+  const record = recallRecord(card, rating, new Date(fsrs.last_review));
+  Object.assign(fsrs, record);
 
   Object.assign(card, fsrs);
   delete card._skipped;
@@ -1890,6 +2059,7 @@ function rate(rating) {
     done++;
   }
   lastRating = { card, prev, rating, at: idx, requeued, undoneTime: fsrs.last_review };
+  showRateToast(rating, fsrs, record);
   updateUndoState();
   idx++;
   if (idx >= deck.length) {
@@ -1936,6 +2106,7 @@ function undoRating() {
     done--;
   }
   idx = u.at;
+  hideRateToast();
   enqueueSave(u.card.id, u.prev, { undo: true, undone_time: u.undoneTime });
   show('s-session');
   updateProgress();
@@ -2670,7 +2841,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.13.6';
+const APP_VERSION = '2026.11.18.1';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

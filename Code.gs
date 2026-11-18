@@ -13,18 +13,18 @@ const HEADERS = [
   'id', 'title', 'keywords', 'back_content', 'back_type',
   'due', 'stability', 'difficulty', 'elapsed_days',
   'scheduled_days', 'reps', 'lapses', 'state', 'last_review',
-  'weak_keywords', 'miss_streak'
+  'weak_keywords', 'miss_streak', 'ok_days', 'fail_days', 'trail'
 ];
 // Columns the app writes on every review
 const FSRS_FIELDS = [
   'stability', 'difficulty', 'elapsed_days', 'scheduled_days',
   'reps', 'lapses', 'state', 'last_review', 'due',
-  'weak_keywords', 'miss_streak'
+  'weak_keywords', 'miss_streak', 'ok_days', 'fail_days', 'trail'
 ];
 // Kept as plain text so Sheets never converts "3/4", "1.5", "=x" or ISO dates
 const TEXT_COLUMNS = [
   'id', 'title', 'keywords', 'back_content', 'back_type',
-  'due', 'last_review', 'weak_keywords'
+  'due', 'last_review', 'weak_keywords', 'trail'
 ];
 // One row per review; the input for an FSRS optimizer. rating 1.5 = Recap
 // (map it to Hard = 2 before optimizing).
@@ -604,6 +604,123 @@ function updateCard(id, fsrs, meta) {
     }
   }
   return { ok: false, error: 'Card not found: ' + id };
+}
+
+// ─── Recall record: rebuild from the review log ────────────────────────────
+// The app keeps ok_days, fail_days and trail per card (recallRecord in index.html).
+// This replays the review log to fill them for reviews made before the columns
+// existed. Same rules as the app: a review counts when it was made in Review state
+// (state_before 2) and the log holds an earlier review of the card to measure the gap
+// from (study days); learning steps and same-day reviews do not count. The result
+// depends only on the log, so it is safe to re-run. Keep both rules equal.
+const RECALL_COLUMNS = ['ok_days', 'fail_days', 'trail'];
+const TRAIL_LEN = 8;
+const TRAIL_CODES = { 1: 'A', 1.5: 'R', 2: 'H', 3: 'G', 4: 'E' };
+
+// UTC offset of the script time zone at that time, daylight saving included.
+function tzOffsetMs_(ms) {
+  const z = Utilities.formatDate(new Date(ms), Session.getScriptTimeZone(), 'Z');
+  const sign = z.charAt(0) === '-' ? -1 : 1;
+  const minutes = Number(z.slice(1, 3)) * 60 + Number(z.slice(3, 5));
+  return sign * minutes * 60000;
+}
+
+// rows: review_log rows (time, card id, rating, state_before, ...). offsetMin (optional)
+// fixes the UTC offset of the study days; without it the script time zone is used.
+// Returns { cards: { id: { ok, fail, trail: ['gap:code'] } }, counted }.
+function replayRecall_(rows, offsetMin) {
+  const fixed = typeof offsetMin === 'number' && isFinite(offsetMin);
+  const events = rows
+    .map(r => ({
+      ms: r[0] instanceof Date ? r[0].getTime() : Date.parse(String(r[0])),
+      id: String(r[1]),
+      rating: Number(r[2]),
+      before: Number(r[3])
+    }))
+    .filter(e => isFinite(e.ms) && e.id)
+    .sort((a, b) => a.ms - b.ms);
+  const cards = {};
+  let counted = 0;
+  events.forEach(e => {
+    const offsetMs = fixed ? offsetMin * 60000 : tzOffsetMs_(e.ms);
+    const day = studyDayOf_(e.ms, offsetMs);
+    const st = cards[e.id] || (cards[e.id] = { day: null, ok: 0, fail: 0, trail: [] });
+    const code = TRAIL_CODES[e.rating];
+    const gap = st.day === null ? 0 : day - st.day;
+    if (e.before === 2 && code && gap >= 1) {
+      if (e.rating >= 3) {
+        st.ok = Math.max(st.ok, gap);
+        if (st.fail && gap >= st.fail) {
+          st.fail = 0;
+        }
+      } else {
+        st.fail = gap;
+      }
+      st.trail.push(gap + ':' + code);
+      if (st.trail.length > TRAIL_LEN) {
+        st.trail.shift();
+      }
+      counted += 1;
+    }
+    st.day = day;
+  });
+  return { cards: cards, counted: counted };
+}
+
+// Fills ok_days, fail_days and trail of every card that has counted reviews in the
+// log; other cards keep their cells. Run it from Flash > Rebuild recall history (or
+// the editor), not while reviewing: a review saved meanwhile may be overwritten.
+function rebuildHorizons(offsetMin) {
+  const sheet   = getSheet_();
+  const headers = ensureColumns_(sheet, RECALL_COLUMNS);
+  const rows    = Math.max(sheet.getLastRow() - 1, 0);
+  const log     = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(LOG_SHEET_NAME);
+  const logRows = log ? Math.max(log.getLastRow() - 1, 0) : 0;
+  const result  = { cards: rows, written: 0, reviews: 0 };
+  if (!rows || !logRows) {
+    return result;
+  }
+  const replay = replayRecall_(log.getRange(2, 1, logRows, 4).getValues(), offsetMin);
+  result.reviews = replay.counted;
+  const ids  = sheet.getRange(2, headers.indexOf('id') + 1, rows, 1).getValues();
+  const cols = RECALL_COLUMNS.map(name => headers.indexOf(name) + 1);
+  const cells = cols.map(col => sheet.getRange(2, col, rows, 1).getValues());
+  ids.forEach((row, i) => {
+    const st = replay.cards[String(row[0])];
+    if (!st || !st.trail.length) {
+      return;
+    }
+    cells[0][i][0] = st.ok || '';
+    cells[1][i][0] = st.fail || '';
+    cells[2][i][0] = st.trail.join(' ');
+    result.written += 1;
+  });
+  if (!result.written) {
+    return result;
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    cols.forEach((col, k) => {
+      const range = sheet.getRange(2, col, rows, 1);
+      if (RECALL_COLUMNS[k] === 'trail') {
+        range.setNumberFormat('@');
+      }
+      range.setValues(cells[k]);
+    });
+  } finally {
+    lock.releaseLock();
+  }
+  return result;
+}
+
+// Flash menu entry
+function rebuildHorizonsMenu() {
+  const r = rebuildHorizons();
+  SpreadsheetApp.getUi().alert(
+    'Recall history rebuilt from the review log.\n\n' +
+    r.written + ' of ' + r.cards + ' cards updated (' + r.reviews + ' reviews counted).');
+  return r;
 }
 
 // ─── API: getStats ─────────────────────────────────────────────────────────
