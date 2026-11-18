@@ -390,7 +390,7 @@ td code { font-size: .82rem; }
     <div class="arch-box-title">Google Sheet</div>
     <div class="arch-box-items">
       Tab: <strong>cards</strong><br>
-      16 columns<br>
+      19 columns<br>
       User adds cards<br>
       FSRS auto-fills
     </div>
@@ -557,7 +557,7 @@ td code { font-size: .82rem; }
 
 <div class="callout callout-warn">
   <div class="callout-label">Important</div>
-  If you skip <code>setupSheet()</code> and create the sheet manually, make sure all 16 column headers exist.
+  If you skip <code>setupSheet()</code> and create the sheet manually, make sure all 19 column headers exist.
   Missing FSRS headers cause silent write failures. The app will auto-add any missing ones on first review,
   but it's cleaner to run setup first.
 </div>
@@ -613,7 +613,7 @@ td code { font-size: .82rem; }
 <!-- ── Schema ──────────────────────────────────────────────────────────── -->
 <h2 id="schema">Sheet Schema</h2>
 
-<p>The <strong>cards</strong> tab has 16 columns. You fill the first 5 for each card; the rest are managed automatically.</p>
+<p>The <strong>cards</strong> tab has 19 columns. You fill the first 5 for each card; the rest are managed automatically.</p>
 
 <table>
   <thead>
@@ -636,10 +636,13 @@ td code { font-size: .82rem; }
     <tr><td>14</td><td><code>last_review</code></td> <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>ISO timestamp of last review</td></tr>
     <tr><td>15</td><td><code>weak_keywords</code></td><td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Keywords that needed a hint in the last review (<code>;</code>-separated)</td></tr>
     <tr><td>16</td><td><code>miss_streak</code></td> <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Consecutive reviews that needed a hint for the same keywords (used by Recap)</td></tr>
+    <tr><td>17</td><td><code>ok_days</code></td>    <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Longest gap (days between two reviews) you recalled without trouble: rated Good or Easy</td></tr>
+    <tr><td>18</td><td><code>fail_days</code></td>  <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Gap of your last Hard, Recap or Again; blank once a Good or Easy at that gap or later beat it</td></tr>
+    <tr><td>19</td><td><code>trail</code></td>      <td class="td-auto td-center">—</td><td class="td-user td-center">✓</td><td>Your last 8 reviews of the card in Review state, oldest first, as <code>gap:rating</code> with the rating A Again, R Recap, H Hard, G Good, E Easy: <code>1:G 4:G 12:G 32:G 77:H</code></td></tr>
   </tbody>
 </table>
 
-<p><strong>Plain text.</strong> The text columns (<code>id</code>, <code>title</code>, <code>keywords</code>, <code>back_content</code>, <code>back_type</code>, <code>due</code>, <code>last_review</code>, <code>weak_keywords</code>) use the plain-text format, so values such as <code>3/4</code>, <code>1.5</code> or <code>=x</code> are kept as typed and ISO timestamps are never turned into dates. <code>setupSheet()</code> applies this to the empty rows below your data; it is safe to re-run. Cells that already hold a converted date or number are not changed, but every review rewrites <code>due</code>, <code>last_review</code> and <code>weak_keywords</code> of its card as text.</p>
+<p><strong>Plain text.</strong> The text columns (<code>id</code>, <code>title</code>, <code>keywords</code>, <code>back_content</code>, <code>back_type</code>, <code>due</code>, <code>last_review</code>, <code>weak_keywords</code>, <code>trail</code>) use the plain-text format, so values such as <code>3/4</code>, <code>1.5</code> or <code>=x</code> are kept as typed and ISO timestamps are never turned into dates. <code>setupSheet()</code> applies this to the empty rows below your data; it is safe to re-run. Cells that already hold a converted date or number are not changed, but every review rewrites <code>due</code>, <code>last_review</code> and <code>weak_keywords</code> of its card as text.</p>
 
 <h3>Review log</h3>
 <p>Every rating appends one row to the <strong>review_log</strong> tab (created on the first review): <code>review_time</code>, <code>card_id</code>, <code>rating</code> (1, 1.5 = Recap, 2, 3, 4), <code>state_before</code>, <code>elapsed_days</code>, <code>scheduled_days</code>, <code>stability</code>, <code>difficulty</code>, <code>hints</code> (keywords revealed), <code>keywords</code> (total) and <code>duration_ms</code>. This is the input for an FSRS optimizer; map Recap to Hard (2) first. A retried request never logs the same review twice, and a logging failure never blocks the card update.</p>
@@ -751,6 +754,7 @@ Blooms ~2 weeks, late March to early April.</pre>
       <li><strong>Why a card shows as its source text</strong> (what the cell says, as is): there are only three reasons. (1) Its <code>back_type</code> is <code>text</code> or blank, or any value other than md, html, svg or live (a typo, or <code>image</code>: there is no such type; a picture is an <code>html</code> card holding an <code>&lt;img&gt;</code>). A yellow line above the card then says which it is and, when the content looks like html, svg or md, which type to set. (2) The sanitizer or Markdown library did not load: the line <em>Sanitizer not loaded; showing the source.</em> above the card and the red text at the bottom. (3) The browser does not support the sanitizer (status line: <em>UNSUPPORTED</em>).</li>
     </ol></li>
   <li><strong>Add picture thumbnail column.</strong> Adds a <code>back_thumb</code> column (once): a small picture of the card inside the sheet, as an <code>=IMAGE("https://…")</code> formula. A card gets one only when it is typed <code>html</code> and is a single <code>&lt;img src="https://…"&gt;</code>; every other row stays empty and keeps its normal height. Sheets fetches the picture itself, so it must be readable without your sign-in: a Drive file needs the sharing <em>Anyone with the link</em>. <strong>An SVG has no thumbnail</strong>: <code>IMAGE</code> accepts only http(s) URLs (<code>data:</code> addresses give <em>…is not a valid url</em>), so use the preview for SVGs. The column is filled by this menu item and on every edit of <code>back_content</code> or <code>back_type</code>. The app never receives it; delete the column to stop. A download of the sheet as TSV or CSV shows the column empty: an image has no text.</li>
+  <li><strong>Rebuild recall history.</strong> Fills <code>ok_days</code>, <code>fail_days</code> and <code>trail</code> of your cards from the <code>review_log</code> tab, for reviews made before these columns existed. Cards without a counted review in the log keep their cells. A review counts when it was made in Review state and the log holds an earlier review of the card to measure the gap from; a card's first logged review has no gap. Safe to re-run; do not run it while you are reviewing.</li>
   <li><strong>Check sheet tools.</strong> Writes a sheet <code>_flash_check</code> to confirm on your account that styling after an emoji lands on the right text (B1) and that <code>IMAGE</code> loads an https picture (A2 should show the Sheets logo). Delete the sheet afterwards; it becomes the active sheet, so go back to <code>cards</code> before using the preview.</li>
 </ul>
 <p>A spreadsheet cell can not show HTML, so the cell shows colored source and the preview shows the result. The colors suit a white sheet (contrast at least 4.5:1).</p>
@@ -786,6 +790,8 @@ Blooms ~2 weeks, late March to early April.</pre>
 <p>Open the <code>/exec</code> URL. The home screen shows today's due count. Hit <strong>Start Review</strong>.</p>
 <p><strong>Home extras.</strong> Below the button, <em>Reviewed today</em> counts today's reviews, with your streak: the number of study days in a row, up to today, with at least one review. A streak with nothing reviewed yet today stays alive until the day ends and says so. <em>Coming days</em> is a bar chart of scheduled cards per day for the next 7 or 30 days (7 d / 30 d buttons; the choice is remembered). Today's bar includes overdue cards and learning steps due later today; new cards are not counted. Days start at 04:00 your local time, the same as the scheduler's study day. Both come from the sheet (the forecast from the cards read, the counts from the time column of <code>review_log</code>) and are simply left out if they can not be loaded.</p>
 <p><strong>Card details.</strong> On a screen at least 1180 px wide, the 🔍 button in the top bar opens a panel beside the card: state, reviews and lapses, stability, difficulty, the recall probability right now, last review, due date, last interval, weak keywords and miss streak, the retention, maximum interval and weights in force, and a table of the interval each rating would give, with your current weights next to the built-in defaults. It follows the card on screen, including hints you reveal, and is meant for judging whether a schedule looks right, especially after fitting personal weights. The panel is remembered; nothing is calculated while it is closed.</p>
+
+<p><strong>Recall strip.</strong> Above the title (and above the ratings, on the answer side) the app shows how well you have recalled the card: the gap since the last review, the recall probability right now and the gap the schedule planned (Review state only), the <em>trail</em> of your last reviews (each a gap in days and how it went: ✓ Good, ✓✓ Easy, H Hard, R Recap, A Again), your <em>best</em> gap recalled without trouble and the gap at which you last <em>failed</em> (Hard, Recap or Again). Together they bracket how long the card can go before you forget it: it held at the best gap and failed at the failed gap. After you rate, a note shows the outcome, for example <em>Hard at 77 d → next 134 d</em>. The strip only shows the record; it does not change the schedule. Learning steps and reviews on the same study day are not counted.</p>
 
 <p>Each session goes through all cards due today in order (most overdue first, new cards last). A progress bar tracks completion. When all cards are rated, a summary screen shows totals.</p>
 

@@ -34,7 +34,7 @@ function load(patch = (s) => s) {
   const ctx = vm.createContext({ Date: FakeDate, Math });
   const names = 'W initS initD nextD sRecall sForget sShort intervalDays dueDate ' +
     'daysBetween scheduleCard nextInterval forgettingCurve curveFactor LEARNING_STEPS ' +
-    'MAX_INTERVAL parseReviewLog holdoutCut replayLoss isScored';
+    'MAX_INTERVAL parseReviewLog holdoutCut replayLoss isScored recallRecord parseTrail TRAIL_LEN';
   const api = vm.runInContext(
     `${patch(block)}\n${replay}\n({${names.split(' ').join(',')}})`, ctx);
   const at = (...args) => {
@@ -337,6 +337,69 @@ test('elapsed capped at 2x scheduled_days', () => {
   const card = { state: 2, stability: 5, difficulty: 5, scheduled_days: 5,
                  last_review: new Date(2026, 5, 1, 10).toISOString() };
   assert.equal(api.scheduleCard(card, 3, 0).elapsed_days, 10);
+});
+
+// ── recall record (ok_days, fail_days, trail): the horizon evidence, no scheduling ──
+const reviewCard = (extra = {}) => ({
+  state: 2, stability: 20, difficulty: 5, scheduled_days: 10,
+  last_review: new Date(2026, 10, 1, 10, 0).toISOString(), ...extra,
+});
+test('recallRecord: Good and Easy raise ok_days and add a trail entry in study days', () => {
+  const now = new Date(2026, 10, 11, 10, 0);                       // gap 10
+  const good = api.recallRecord(reviewCard({ ok_days: 4, trail: '1:G' }), 3, now);
+  assert.deepEqual({ ...good }, { ok_days: 10, fail_days: '', trail: '1:G 10:G' });
+  const easy = api.recallRecord(reviewCard({ ok_days: 30 }), 4, now);
+  assert.deepEqual({ ...easy }, { ok_days: 30, fail_days: '', trail: '10:E' });
+});
+test('recallRecord: Hard, Recap and Again set fail_days to the gap; ok_days is kept', () => {
+  const now = new Date(2026, 10, 11, 10, 0);
+  for (const [rating, code] of [[2, 'H'], [1.5, 'R'], [1, 'A']]) {
+    const rec = api.recallRecord(reviewCard({ ok_days: 6, fail_days: 40 }), rating, now);
+    assert.deepEqual({ ...rec }, { ok_days: 6, fail_days: 10, trail: '10:' + code });
+  }
+});
+test('recallRecord: a failure is beaten by Good/Easy at that gap or later', () => {
+  const now = new Date(2026, 10, 11, 10, 0);                       // gap 10
+  const kept = api.recallRecord(reviewCard({ fail_days: 11 }), 3, now);
+  assert.equal(kept.fail_days, 11);
+  const equal = api.recallRecord(reviewCard({ fail_days: 10 }), 3, now);
+  assert.equal(equal.fail_days, '');
+  const later = api.recallRecord(reviewCard({ fail_days: 7 }), 4, now);
+  assert.equal(later.fail_days, '');
+});
+test('recallRecord: the trail keeps the newest 8 entries, oldest first', () => {
+  const trail = '1:G 2:G 3:G 4:G 5:G 6:G 7:G 8:G';
+  const rec = api.recallRecord(reviewCard({ trail }), 2, new Date(2026, 10, 11, 10, 0));
+  assert.equal(rec.trail, '2:G 3:G 4:G 5:G 6:G 7:G 8:G 10:H');
+  assert.equal(api.TRAIL_LEN, 8);
+});
+test('recallRecord: only Review-state reviews with a gap of 1+ study days count', () => {
+  const now = new Date(2026, 10, 11, 10, 0);
+  for (const state of [0, 1, 3]) {
+    assert.deepEqual({ ...api.recallRecord(reviewCard({ state }), 3, now) }, {}, 'state ' + state);
+  }
+  const sameDay = new Date(2026, 10, 1, 20, 0);
+  assert.deepEqual({ ...api.recallRecord(reviewCard(), 3, sameDay) }, {});
+  assert.deepEqual({ ...api.recallRecord(reviewCard({ last_review: '' }), 3, now) }, {});
+  assert.deepEqual({ ...api.recallRecord(reviewCard({ last_review: 'x' }), 3, now) }, {});
+  assert.deepEqual({ ...api.recallRecord(reviewCard(), 2.5, now) }, {}, 'unknown rating');
+});
+test('recallRecord: gap is counted in study days (23:00 -> 04:00 next day = 1)', () => {
+  const card = reviewCard({ last_review: new Date(2026, 10, 5, 23, 0).toISOString() });
+  const rec = api.recallRecord(card, 3, new Date(2026, 10, 6, 4, 0));
+  assert.equal(rec.trail, '1:G');
+  const early = api.recallRecord(card, 3, new Date(2026, 10, 6, 3, 59));
+  assert.deepEqual({ ...early }, {}, 'before the rollover it is still the same study day');
+});
+test('parseTrail ignores what is not "gap:code"; scheduleCard does not touch the record', () => {
+  const parsed = [...api.parseTrail('3:G junk 12:H 7:X :G 5:')].map((t) => t.gap + t.code);
+  assert.deepEqual(parsed, ['3G', '12H']);
+  assert.equal(api.parseTrail(undefined).length, 0);
+  at(2026, 10, 11, 10, 0);
+  const next = api.scheduleCard(reviewCard({ trail: '1:G', ok_days: 1 }), 2, 0);
+  for (const key of ['trail', 'ok_days', 'fail_days']) {
+    assert.equal(key in next, false, key);
+  }
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
