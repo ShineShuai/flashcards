@@ -41,15 +41,17 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 //          forecast [..], newLimit { limit, introduced, remaining } (both sent with bootstrap),
 //          activity { today, days } | Error (getActivity)
 //          horizonCards [..] | Error (getHorizonCards), applyHorizon (changes) => reply
+//          recallRows [..] | Error (getRecallRows)
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
           versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, newLimit,
-          activity, horizonCards = [], applyHorizon, server = {} } = options;
+          activity, horizonCards = [], applyHorizon, recallRows = [], server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], settingsCalls: [],
-                bootstrapArgs: [], activityArgs: [], dueArgs: [], horizonCalls: [], ...server };
+                bootstrapArgs: [], activityArgs: [], dueArgs: [], horizonCalls: [],
+                recallCalls: 0, ...server };
   const own = html.match(/^const APP_VERSION = '([^']*)';/m)[1];
   const ver = { version: own, url: 'https://script.google.test/macros/s/ID/exec', fail: false,
                 calls: 0, ...versionServer };   // calls: kept out of ev, which orders saves
@@ -143,6 +145,13 @@ export function boot(options = {}) {
             bad({ message: reply.message });
           } else {
             ok(reply);
+          }
+        } else if (fn === 'getRecallRows') {
+          srv.recallCalls++;
+          if (recallRows instanceof Error) {
+            bad({ message: recallRows.message });
+          } else {
+            ok(recallRows.map((c) => ({ ...c })));
           }
         } else if (fn === 'getHorizonCards') {
           if (horizonCards instanceof Error) {

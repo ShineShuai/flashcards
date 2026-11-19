@@ -349,7 +349,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ` saveSettings, getVersion, APP_VERSION, getReviewLog, getWeightsHistory,` +
     ` getActivity, forecastFrom_, studyDayOf_, ROLLOVER_HOUR, FORECAST_DAYS,` +
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
-    ` rebuildHorizons, replayRecall_, getHorizonCards, applyHorizon,` +
+    ` rebuildHorizons, replayRecall_, getHorizonCards, applyHorizon, getRecallRows,` +
     ` tokenize_, sniffType_, imageFormula_, thumbFor_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
@@ -1468,6 +1468,27 @@ if (isMain) {
     assert.equal(env.api.applyHorizon(new Array(5001).fill({})).ok, false);
     assert.deepEqual(plain(env.api.applyHorizon([])), { ok: true, applied: [], stale: 0,
       missing: 0, invalid: 0 });
+  });
+
+  test('getRecallRows: every card, numbers and ISO dates, no card content', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', title: 'A', back_content: 'secret', ...sched() });
+    env.put(3, { id: 'b', title: 'B', keywords: 'x;y' });                 // a new card
+    env.put(4, { id: 'c', title: 'C', ...sched({ last_review: new Date(LR), due: '' }) });
+    const rows = plain(env.api.getRecallRows());
+    assert.deepEqual(rows.map((r) => r.id), ['a', 'b', 'c']);
+    assert.deepEqual(rows[0], {
+      id: 'a', title: 'A', state: 2, stability: 266, scheduled_days: 134, reps: 7, lapses: 0,
+      last_review: LR, due: '2027-03-03T03:00:00.000Z', ok_days: 32, fail_days: 77,
+      cap_days: 65.45, trail: '1:G 4:G 12:G 32:G 77:H',
+    });
+    assert.deepEqual(rows[1], {
+      id: 'b', title: 'B', state: 0, stability: 0, scheduled_days: 0, reps: 0, lapses: 0,
+      last_review: '', due: '', ok_days: 0, fail_days: 0, cap_days: 0, trail: '',
+    });
+    assert.equal(rows[2].last_review, LR, 'a Date cell comes out as an ISO string');
+    assert.equal(rows[2].due, '');
+    assert.equal(JSON.stringify(rows).includes('secret'), false);
   });
 
   console.log(failed ? `\n${failed} failed` : '\nall passed');

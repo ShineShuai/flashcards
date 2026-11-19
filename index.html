@@ -226,6 +226,33 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .w-field.w-check { justify-content: flex-start; align-items: flex-start; }
 .w-check input { width: auto; flex: none; margin-top: 3px; }
 .w-block   { margin: 18px 0; }
+.rc-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.rc-filters button { font: inherit; font-size: .75rem; padding: 3px 10px; cursor: pointer;
+  color: var(--text2); background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 100px; }
+.rc-filters button[aria-pressed="true"] { color: var(--text); font-weight: 700;
+  background: var(--bg2); }
+.rc-row    { padding: 8px 0; border-top: 1px solid var(--border); }
+.rc-head   { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.rc-title  { font-weight: 700; font-size: .85rem; overflow-wrap: anywhere; }
+.rc-chip   { flex: none; font-size: .7rem; font-weight: 700; padding: 0 8px;
+  border-radius: 100px; background: var(--bg2); }
+.rc-chip.past { color: var(--pink-t); }
+.rc-chip.due, .rc-chip.watch { color: var(--amber-t); }
+.rc-chip.safe { color: var(--mint-t); }
+.rc-chip.learning, .rc-chip.new { color: var(--text2); }
+.rc-row .recall-strip { margin: 4px 0; }
+.rc-track  { position: relative; height: 12px; margin: 4px 0 2px; }
+.rc-bar    { position: absolute; left: 0; right: 0; top: 3px; height: 6px; overflow: hidden;
+  border-radius: 3px; background: var(--bg2); }
+.rc-seg    { position: absolute; top: 0; bottom: 0; }
+.rc-seg.ok  { background: var(--mint); opacity: .6; }
+.rc-seg.unk { background: var(--amber); opacity: .6; }
+.rc-seg.bad { background: var(--pink); opacity: .5; }
+.rc-mark   { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px;
+  background: var(--text); }
+.rc-mark.plan { top: 2px; bottom: 2px; width: 6px; margin-left: -3px; background: none;
+  border: 2px solid var(--text2); transform: rotate(45deg) scale(.7); }
 .hz-row    { padding: 6px 0; border-top: 1px solid var(--border); font-size: .8rem; }
 .hz-title  { font-weight: 700; overflow-wrap: anywhere; }
 .hz-meta   { color: var(--text2); }
@@ -629,6 +656,9 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     <button class="btn btn-primary btn-block" id="startBtn" onclick="startSession()">
       ▶&nbsp; Start Review
     </button>
+    <button class="btn btn-secondary btn-block" id="recallBtn" onclick="showRecall()">
+      Recall status
+    </button>
     <div class="home-activity hidden" id="home-activity"></div>
     <div class="forecast hidden" id="forecast">
       <div class="forecast-head">
@@ -765,6 +795,22 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   <div class="insp-title">Card details</div>
   <div id="inspector-body"></div>
 </aside>
+
+<div id="s-recall" class="screen hidden">
+  <div class="panel">
+    <div class="home-title">Recall status</div>
+    <div class="home-sub" id="rc-summary"></div>
+    <div class="rc-filters" id="rc-filters" role="group" aria-label="Filter by status"></div>
+    <p class="w-p">Bar: recalled up to the green part, the horizon is somewhere in the amber
+      part, pink is beyond the failed gap. | is now, ◇ the planned review.</p>
+    <div id="rc-list"></div>
+    <button class="btn btn-secondary btn-block" id="rc-more" onclick="recallMore()" hidden>
+      Show more</button>
+    <button class="btn btn-secondary btn-block" id="rc-reload" onclick="showRecall()">
+      Reload</button>
+    <button class="btn btn-secondary btn-block" onclick="showHome()">↩ Home</button>
+  </div>
+</div>
 
 <div id="s-weights" class="screen hidden">
   <div class="panel">
@@ -1214,6 +1260,41 @@ function horizonPull(card, now) {
     stability:      +Math.min(stability, stabilityFor(limit)).toFixed(4)
   };
 }
+
+// Where a card stands, for the Recall screen. Most urgent first:
+//   past      Review state, a failure on record, and the gap has reached the failed gap
+//   due       the due date has come (or passed)
+//   watch     a failure on record that no Good or Easy has beaten yet, not due yet
+//   safe      Review state, nothing of the above
+//   learning  short steps (Learning, Relearning)
+//   new       never reviewed
+// risk orders cards inside one status: how far past the failed gap, else 1 - recall.
+const RECALL_ORDER = ['past', 'due', 'watch', 'safe', 'learning', 'new'];
+function recallStatus(card, now) {
+  const state = Number(card.state) || 0;
+  if (state === 0) {
+    return { status: 'new', risk: 0 };
+  }
+  if (state !== 2) {
+    return { status: 'learning', risk: 0 };
+  }
+  const last      = new Date(card.last_review);
+  const stability = Number(card.stability);
+  if (isNaN(last.getTime()) || !(stability > 0)) {
+    return { status: 'safe', risk: 0 };
+  }
+  const gap    = daysBetween(last, now);
+  const recall = forgettingCurve(gap, stability);
+  const fail   = Number(card.fail_days) || 0;
+  const due    = new Date(card.due);
+  if (fail && gap >= fail) {
+    return { status: 'past', gap, recall, risk: gap / fail };
+  }
+  if (!isNaN(due.getTime()) && due <= now) {
+    return { status: 'due', gap, recall, risk: 1 - recall };
+  }
+  return { status: fail ? 'watch' : 'safe', gap, recall, risk: 1 - recall };
+}
 // @fsrs-end
 const DEFAULT_W = W.slice();                  // the built-in defaults, before any config
 const DEFAULT_RETENTION    = DESIRED_RETENTION;
@@ -1523,7 +1604,7 @@ function whenSaved(fn, timeoutMs) {
 // ═══════════════════════════════════════════════════════════════════════════
 // Screen Management
 // ═══════════════════════════════════════════════════════════════════════════
-const SCREENS = ['s-loading','s-home','s-session','s-complete','s-weights'];
+const SCREENS = ['s-loading','s-home','s-session','s-complete','s-weights','s-recall'];
 function show(id) {
   SCREENS.forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
   document.body.dataset.screen = id;
@@ -2934,6 +3015,153 @@ function undoHorizonPull() {
   });
 }
 
+// ── Recall screen: every card, most urgent first ───────────────────────────────────
+const RECALL_PAGE = 50;
+const RECALL_LABELS = { past: 'Past horizon', due: 'Due', watch: 'Watch', safe: 'Safe',
+                        learning: 'Learning', new: 'New' };
+let recallItems  = null;     // [{ card, st }] sorted most urgent first
+let recallFilter = 'all';
+let recallShown  = RECALL_PAGE;
+function recallSort(a, b) {
+  const byStatus = RECALL_ORDER.indexOf(a.st.status) - RECALL_ORDER.indexOf(b.st.status);
+  if (byStatus) {
+    return byStatus;
+  }
+  if (b.st.risk !== a.st.risk) {
+    return b.st.risk - a.st.risk;
+  }
+  return String(a.card.title).localeCompare(String(b.card.title));
+}
+function showRecall() {
+  show('s-recall');
+  recallItems = null;
+  recallFilter = 'all';
+  recallShown = RECALL_PAGE;
+  document.getElementById('rc-list').textContent = '';
+  document.getElementById('rc-filters').textContent = '';
+  document.getElementById('rc-more').hidden = true;
+  document.getElementById('rc-reload').disabled = true;
+  wText('rc-summary', 'Loading…');
+  whenSaved(() => {                  // a review still being saved would be read as it was
+    google.script.run
+      .withSuccessHandler(rows => {
+        const now = new Date();
+        recallItems = (rows || [])
+          .map(card => ({ card, st: recallStatus(card, now) }))
+          .sort(recallSort);
+        document.getElementById('rc-reload').disabled = false;
+        renderRecall();
+      })
+      .withFailureHandler(err => {
+        document.getElementById('rc-reload').disabled = false;
+        wText('rc-summary', 'Could not load: ' + err.message);
+      })
+      .getRecallRows();
+  }, SAVE_WAIT_MS);
+}
+function recallMore() {
+  recallShown += RECALL_PAGE;
+  renderRecall();
+}
+function setRecallFilter(status) {
+  recallFilter = status;
+  recallShown = RECALL_PAGE;
+  renderRecall();
+}
+function recallTrack(card) {
+  const last = new Date(card.last_review);
+  if (Number(card.state) !== 2 || isNaN(last.getTime())) {
+    return null;
+  }
+  const gap  = daysBetween(last, new Date());
+  const ok   = Number(card.ok_days) || 0;
+  const fail = Number(card.fail_days) || 0;
+  const plan = Number(card.scheduled_days) || 0;
+  const top  = Math.max(gap, ok, fail, plan, 1) * 1.1;
+  const pct  = x => (100 * x / top).toFixed(1) + '%';
+  const track = document.createElement('div');
+  track.className = 'rc-track';
+  track.setAttribute('role', 'img');
+  track.setAttribute('aria-label', 'gap ' + gap + ' d, planned ' + plan + ' d' +
+    (ok ? ', best ' + ok + ' d' : '') + (fail ? ', failed ' + fail + ' d' : ''));
+  const bar = document.createElement('div');
+  bar.className = 'rc-bar';
+  const seg = (kind, from, to) => {
+    const el = document.createElement('div');
+    el.className = 'rc-seg ' + kind;
+    el.style.left = pct(from);
+    el.style.width = (100 * (to - from) / top).toFixed(1) + '%';
+    bar.appendChild(el);
+  };
+  if (fail) {
+    seg('bad', fail, top);
+  }
+  if (ok) {
+    seg('ok', 0, ok);
+  }
+  if (ok && fail && ok < fail) {
+    seg('unk', ok, fail);
+  }
+  if (!ok && fail) {
+    seg('unk', 0, fail);
+  }
+  track.appendChild(bar);
+  const mark = (kind, at) => {
+    const el = document.createElement('div');
+    el.className = 'rc-mark ' + kind;
+    el.style.left = pct(at);
+    track.appendChild(el);
+  };
+  if (plan) {
+    mark('plan', plan);
+  }
+  mark('now', gap);
+  return track;
+}
+function renderRecall() {
+  const items = recallItems || [];
+  const counts = {};
+  items.forEach(({ st }) => {
+    counts[st.status] = (counts[st.status] || 0) + 1;
+  });
+  wText('rc-summary', items.length + ' cards' + RECALL_ORDER
+    .filter(s => counts[s])
+    .map(s => ' · ' + RECALL_LABELS[s] + ' ' + counts[s]).join(''));
+  const filters = document.getElementById('rc-filters');
+  filters.textContent = '';
+  [['all', 'All ' + items.length]].concat(RECALL_ORDER
+    .filter(s => counts[s])
+    .map(s => [s, RECALL_LABELS[s] + ' ' + counts[s]])).forEach(([key, text]) => {
+    const btn = document.createElement('button');
+    btn.textContent = text;
+    btn.setAttribute('aria-pressed', String(recallFilter === key));
+    btn.onclick = () => setRecallFilter(key);
+    filters.appendChild(btn);
+  });
+  const shown = items.filter(({ st }) => recallFilter === 'all' || st.status === recallFilter);
+  const list = document.getElementById('rc-list');
+  list.textContent = '';
+  shown.slice(0, recallShown).forEach(({ card, st }) => {
+    const row = document.createElement('div');
+    row.className = 'rc-row';
+    const head = document.createElement('div');
+    head.className = 'rc-head';
+    head.appendChild(stripPart('rc-title', card.title));
+    head.appendChild(stripPart('rc-chip ' + st.status, RECALL_LABELS[st.status]));
+    row.appendChild(head);
+    const strip = document.createElement('div');
+    strip.className = 'recall-strip';
+    strip.appendChild(buildRecallStrip(card));
+    row.appendChild(strip);
+    const track = recallTrack(card);
+    if (track) {
+      row.appendChild(track);
+    }
+    list.appendChild(row);
+  });
+  document.getElementById('rc-more').hidden = shown.length <= recallShown;
+}
+
 function toCsv(res) {
   const cell = v => {
     const s = String(v);
@@ -3096,7 +3324,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.19.2';
+const APP_VERSION = '2026.11.19.3';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

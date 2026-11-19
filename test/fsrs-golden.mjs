@@ -35,7 +35,7 @@ function load(patch = (s) => s, guard = true) {
   const names = 'W initS initD nextD sRecall sForget sShort intervalDays dueDate ' +
     'daysBetween scheduleCard nextInterval forgettingCurve curveFactor LEARNING_STEPS ' +
     'MAX_INTERVAL parseReviewLog holdoutCut replayLoss isScored recallRecord parseTrail ' +
-    'TRAIL_LEN stabilityFor horizonPull';
+    'TRAIL_LEN stabilityFor horizonPull recallStatus RECALL_ORDER';
   const api = vm.runInContext(
     `${patch(block)}\n${replay}\nHORIZON_GUARD = ${guard};\n` +
     `({${names.split(' ').join(',')}})`, ctx);
@@ -563,6 +563,51 @@ test('horizonPull gives the state the guard would have produced at that review',
     assert.equal(pull.due, on.due);
     assert.equal(pull.stability, on.stability);
   }
+});
+
+
+// ── recallStatus: where a card stands, for the Recall screen ──
+const standing = (extra = {}) => ({
+  state: 2, stability: 60, scheduled_days: 38,
+  last_review: new Date(2026, 9, 10, 10, 0).toISOString(),     // 10 Oct
+  due: new Date(2026, 10, 27, 4, 0).toISOString(),             // 27 Nov
+  ...extra,
+});
+test('recallStatus: new, learning and Review cards without data', () => {
+  const now = new Date(2026, 10, 19, 10, 0);                   // gap 40
+  assert.equal(api.recallStatus({ state: 0 }, now).status, 'new');
+  assert.equal(api.recallStatus({}, now).status, 'new');
+  assert.equal(api.recallStatus({ state: 1 }, now).status, 'learning');
+  assert.equal(api.recallStatus({ state: 3 }, now).status, 'learning');
+  assert.equal(api.recallStatus(standing({ last_review: '' }), now).status, 'safe');
+  assert.equal(api.recallStatus(standing({ stability: 0 }), now).risk, 0);
+});
+test('recallStatus: past > due > watch > safe, decided in that order', () => {
+  const now = new Date(2026, 10, 19, 10, 0);                   // gap 40
+  const st = (extra) => api.recallStatus(standing(extra), now);
+  assert.equal(st({}).status, 'safe');
+  assert.equal(st({ fail_days: 77 }).status, 'watch', 'a failure not reached yet');
+  assert.equal(st({ fail_days: 40 }).status, 'past', 'the gap has reached the failed gap');
+  assert.equal(st({ fail_days: 30 }).status, 'past');
+  assert.equal(st({ due: new Date(2026, 10, 19, 4, 0).toISOString() }).status, 'due');
+  assert.equal(st({ due: new Date(2026, 10, 19, 4, 0).toISOString(), fail_days: 77 }).status,
+    'due', 'due beats watch');
+  assert.equal(st({ due: new Date(2026, 10, 19, 4, 0).toISOString(), fail_days: 30 }).status,
+    'past', 'past beats due');
+  assert.equal(st({ due: new Date(2026, 10, 19, 12, 0).toISOString() }).status, 'safe',
+    'due later today is not due yet');
+  assert.equal(api.RECALL_ORDER.join(), 'past,due,watch,safe,learning,new');
+});
+test('recallStatus: risk is how far past the failed gap, else 1 - recall now', () => {
+  const now = new Date(2026, 10, 19, 10, 0);
+  const past = api.recallStatus(standing({ fail_days: 20 }), now);
+  assert.equal(past.risk, 2, '40 d against a failed gap of 20 d');
+  assert.equal(past.gap, 40);
+  const safe = api.recallStatus(standing(), now);
+  assert.equal(safe.risk, 1 - api.forgettingCurve(40, 60));
+  assert.equal(safe.recall, api.forgettingCurve(40, 60));
+  const weaker = api.recallStatus(standing({ stability: 20 }), now);
+  assert.ok(weaker.risk > safe.risk, 'lower stability, higher risk');
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

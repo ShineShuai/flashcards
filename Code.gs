@@ -816,6 +816,26 @@ function applyHorizon(changes) {
   return result;
 }
 
+// ─── API: getRecallRows (Recall screen) ────────────────────────────────────
+// Every card with the fields the Recall screen needs, no card content.
+function getRecallRows() {
+  return readCards_().map(c => ({
+    id: String(c.id),
+    title: String(c.title || ''),
+    state: Number(c.state) || 0,
+    stability: Number(c.stability) || 0,
+    scheduled_days: Number(c.scheduled_days) || 0,
+    reps: Number(c.reps) || 0,
+    lapses: Number(c.lapses) || 0,
+    last_review: isoOf_(c.last_review),
+    due: isoOf_(c.due),
+    ok_days: Number(c.ok_days) || 0,
+    fail_days: Number(c.fail_days) || 0,
+    cap_days: Number(c.cap_days) || 0,
+    trail: String(c.trail || '')
+  }));
+}
+
 // ─── API: getStats ─────────────────────────────────────────────────────────
 
 function getStats(offsetMin) {
