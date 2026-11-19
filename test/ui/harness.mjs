@@ -40,15 +40,16 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 //          reviewLog { columns, rows }, weightsHistory [..], saveSettings (patch, meta) => reply,
 //          forecast [..], newLimit { limit, introduced, remaining } (both sent with bootstrap),
 //          activity { today, days } | Error (getActivity)
+//          horizonCards [..] | Error (getHorizonCards), applyHorizon (changes) => reply
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
           versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, newLimit,
-          activity, server = {} } = options;
+          activity, horizonCards = [], applyHorizon, server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], settingsCalls: [],
-                bootstrapArgs: [], activityArgs: [], dueArgs: [], ...server };
+                bootstrapArgs: [], activityArgs: [], dueArgs: [], horizonCalls: [], ...server };
   const own = html.match(/^const APP_VERSION = '([^']*)';/m)[1];
   const ver = { version: own, url: 'https://script.google.test/macros/s/ID/exec', fail: false,
                 calls: 0, ...versionServer };   // calls: kept out of ev, which orders saves
@@ -138,6 +139,20 @@ export function boot(options = {}) {
         } else if (fn === 'saveSettings') {
           srv.settingsCalls.push({ patch: args[0], meta: args[1] });
           const reply = saveSettings ? saveSettings(args[0], args[1]) : { ok: true, config: {} };
+          if (reply instanceof Error) {
+            bad({ message: reply.message });
+          } else {
+            ok(reply);
+          }
+        } else if (fn === 'getHorizonCards') {
+          if (horizonCards instanceof Error) {
+            bad({ message: horizonCards.message });
+          } else {
+            ok(horizonCards.map((c) => ({ ...c })));
+          }
+        } else if (fn === 'applyHorizon') {
+          srv.horizonCalls.push(args[0]);
+          const reply = applyHorizon ? applyHorizon(args[0]) : { ok: true, applied: [] };
           if (reply instanceof Error) {
             bad({ message: reply.message });
           } else {

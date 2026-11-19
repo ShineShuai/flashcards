@@ -349,7 +349,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ` saveSettings, getVersion, APP_VERSION, getReviewLog, getWeightsHistory,` +
     ` getActivity, forecastFrom_, studyDayOf_, ROLLOVER_HOUR, FORECAST_DAYS,` +
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
-    ` rebuildHorizons, replayRecall_,` +
+    ` rebuildHorizons, replayRecall_, getHorizonCards, applyHorizon,` +
     ` tokenize_, sniffType_, imageFormula_, thumbFor_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
@@ -1383,6 +1383,91 @@ if (isMain) {
     } finally {
       process.env.TZ = was;
     }
+  });
+
+  // ── horizon guard: cards already scheduled past their cap ────────────────
+  const LR = '2026-10-20T08:00:00.000Z';
+  const sched = (extra = {}) => ({
+    state: 2, stability: 266, difficulty: 6, scheduled_days: 134, reps: 7, lapses: 0,
+    last_review: LR, due: '2027-03-03T03:00:00.000Z', fail_days: 77, cap_days: 65.45,
+    ok_days: 32, trail: '1:G 4:G 12:G 32:G 77:H', ...extra,
+  });
+
+  test('getHorizonCards: Review-state cards with a failure and an active cap, slim rows', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', title: 'A', back_content: 'secret', ...sched() });
+    env.put(3, { id: 'b', ...sched({ cap_days: '' }) });                    // Again: no cap
+    env.put(4, { id: 'c', ...sched({ state: 3 }) });
+    env.put(5, { id: 'd', ...sched({ fail_days: '' }) });
+    env.put(6, { id: 'e', ...sched({ last_review: new Date(LR) }) });      // a converted date
+    const rows = plain(env.api.getHorizonCards());
+    assert.deepEqual(rows.map((r) => r.id), ['a', 'e']);
+    assert.deepEqual(rows[0], {
+      id: 'a', title: 'A', stability: 266, scheduled_days: 134, last_review: LR,
+      due: '2027-03-03T03:00:00.000Z', ok_days: 32, fail_days: 77, cap_days: 65.45,
+    });
+    assert.equal(rows[1].last_review, LR, 'a Date cell comes out as an ISO string');
+  });
+
+  test('applyHorizon writes due, scheduled_days, stability only; nothing is logged', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', ...sched() });
+    env.put(3, { id: 'b', ...sched() });
+    const col = (h) => env.headers.indexOf(h) + 1;
+    const res = plain(env.api.applyHorizon([
+      { id: 'a', last_review: LR, due: '2026-12-24T03:00:00.000Z', scheduled_days: 65,
+        stability: 120.5 },
+    ]));
+    assert.deepEqual(res, { ok: true, applied: ['a'], stale: 0, missing: 0, invalid: 0 });
+    assert.equal(env.sheet.get(2, col('due')), '2026-12-24T03:00:00.000Z');
+    assert.equal(env.sheet.get(2, col('scheduled_days')), 65);
+    assert.equal(env.sheet.get(2, col('stability')), 120.5);
+    assert.equal(env.sheet.fmt.get('2,' + col('due')), '@');
+    for (const [field, want] of [['difficulty', 6], ['reps', 7], ['state', 2], ['last_review', LR],
+                                 ['trail', '1:G 4:G 12:G 32:G 77:H'], ['cap_days', 65.45]]) {
+      assert.equal(env.sheet.get(2, col(field)), want, field + ' is left alone');
+    }
+    assert.equal(env.sheet.get(3, col('scheduled_days')), 134, 'other cards are left alone');
+    assert.equal(env.sheets.get('review_log'), undefined, 'no review took place: no log row');
+  });
+
+  test('applyHorizon skips reviewed, unknown and bad entries; the same call undoes', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', ...sched() });
+    const newer = '2026-11-18T09:00:00.000Z';
+    env.put(3, { id: 'b', ...sched({ last_review: newer }) });             // reviewed since
+    const col = (h) => env.headers.indexOf(h) + 1;
+    const good = { due: '2026-12-24T03:00:00.000Z', scheduled_days: 65, stability: 120.5 };
+    const res = plain(env.api.applyHorizon([
+      { id: 'a', last_review: LR, ...good },
+      { id: 'b', last_review: LR, ...good },                     // read before that review
+      { id: 'zz', last_review: LR, ...good },
+      { id: 'a', last_review: LR, due: 'x', scheduled_days: 1, stability: 1 },
+      { id: 'a', last_review: LR, due: good.due, scheduled_days: 1, stability: 0 },
+      null,
+    ]));
+    assert.deepEqual(res, { ok: true, applied: ['a'], stale: 1, missing: 1, invalid: 3 });
+    assert.equal(env.sheet.get(3, col('scheduled_days')), 134, 'the reviewed card is untouched');
+
+    const back = plain(env.api.applyHorizon([{ id: 'a', last_review: LR,
+      due: '2027-03-03T03:00:00.000Z', scheduled_days: 134, stability: 266 }]));
+    assert.deepEqual(back.applied, ['a']);
+    assert.equal(env.sheet.get(2, col('due')), '2027-03-03T03:00:00.000Z');
+    assert.equal(env.sheet.get(2, col('scheduled_days')), 134);
+    assert.equal(env.sheet.get(2, col('stability')), 266);
+    env.put(2, { last_review: '2026-11-19T08:00:00.000Z' });                // reviewed: no restore
+    const late = plain(env.api.applyHorizon([{ id: 'a', last_review: LR, ...good }]));
+    assert.deepEqual(late.applied, []);
+    assert.equal(late.stale, 1);
+  });
+
+  test('applyHorizon rejects a request that is not a list or is too long', () => {
+    const env = fixture();
+    assert.equal(env.api.applyHorizon({}).ok, false);
+    assert.equal(env.api.applyHorizon(null).ok, false);
+    assert.equal(env.api.applyHorizon(new Array(5001).fill({})).ok, false);
+    assert.deepEqual(plain(env.api.applyHorizon([])), { ok: true, applied: [], stale: 0,
+      missing: 0, invalid: 0 });
   });
 
   console.log(failed ? `\n${failed} failed` : '\nall passed');
