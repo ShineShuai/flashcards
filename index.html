@@ -801,6 +801,9 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
     <div class="home-title">Recall status</div>
     <div class="home-sub" id="rc-summary"></div>
     <div class="rc-filters" id="rc-filters" role="group" aria-label="Filter by status"></div>
+    <p class="w-p" id="rc-ahead-note" hidden></p>
+    <button class="btn btn-primary btn-block" id="rc-ahead" onclick="startAhead()" hidden>
+      Review ahead</button>
     <p class="w-p">Bar: recalled up to the green part, the horizon is somewhere in the amber
       part, pink is beyond the failed gap. | is now, ◇ the planned review.</p>
     <div id="rc-list"></div>
@@ -1294,6 +1297,24 @@ function recallStatus(card, now) {
     return { status: 'due', gap, recall, risk: 1 - recall };
   }
   return { status: fail ? 'watch' : 'safe', gap, recall, risk: 1 - recall };
+}
+
+// Review ahead: a Review-state card that is not due yet but whose gap has come within
+// AHEAD_FRACTION of the gap where it failed (fail_days). Returns gap / fail_days (1 or
+// more: already at the failed gap), or null when the card does not qualify.
+const AHEAD_FRACTION = 0.75;
+function aheadRatio(card, now) {
+  const fail = Number(card.fail_days) || 0;
+  const last = new Date(card.last_review);
+  const due  = new Date(card.due);
+  if (Number(card.state) !== 2 || !(fail > 0) || isNaN(last.getTime()) || isNaN(due.getTime())) {
+    return null;
+  }
+  if (due <= now) {
+    return null;                       // the normal review queue has it
+  }
+  const ratio = daysBetween(last, now) / fail;
+  return ratio >= AHEAD_FRACTION ? ratio : null;
 }
 // @fsrs-end
 const DEFAULT_W = W.slice();                  // the built-in defaults, before any config
@@ -3017,6 +3038,7 @@ function undoHorizonPull() {
 
 // ── Recall screen: every card, most urgent first ───────────────────────────────────
 const RECALL_PAGE = 50;
+const AHEAD_MAX = 50;                // cards in one Review ahead session
 const RECALL_LABELS = { past: 'Past horizon', due: 'Due', watch: 'Watch', safe: 'Safe',
                         learning: 'Learning', new: 'New' };
 let recallItems  = null;     // [{ card, st }] sorted most urgent first
@@ -3040,6 +3062,8 @@ function showRecall() {
   document.getElementById('rc-list').textContent = '';
   document.getElementById('rc-filters').textContent = '';
   document.getElementById('rc-more').hidden = true;
+  document.getElementById('rc-ahead').hidden = true;
+  document.getElementById('rc-ahead-note').hidden = true;
   document.getElementById('rc-reload').disabled = true;
   wText('rc-summary', 'Loading…');
   whenSaved(() => {                  // a review still being saved would be read as it was
@@ -3047,7 +3071,7 @@ function showRecall() {
       .withSuccessHandler(rows => {
         const now = new Date();
         recallItems = (rows || [])
-          .map(card => ({ card, st: recallStatus(card, now) }))
+          .map(card => ({ card, st: recallStatus(card, now), ahead: aheadRatio(card, now) }))
           .sort(recallSort);
         document.getElementById('rc-reload').disabled = false;
         renderRecall();
@@ -3160,6 +3184,42 @@ function renderRecall() {
     list.appendChild(row);
   });
   document.getElementById('rc-more').hidden = shown.length <= recallShown;
+  const ahead = aheadPicks();
+  const btn = document.getElementById('rc-ahead');
+  const note = document.getElementById('rc-ahead-note');
+  btn.hidden = note.hidden = !ahead.length;
+  btn.textContent = 'Review ahead (' + Math.min(ahead.length, AHEAD_MAX) + ')';
+  note.textContent = ahead.length + (ahead.length === 1 ? ' card is' : ' cards are') +
+    ' not due yet but within ' + Math.round(100 * (1 - AHEAD_FRACTION)) +
+    '% of the gap where you failed. The closest come first.';
+}
+// The cards for Review ahead, closest to (or past) their failed gap first.
+function aheadPicks() {
+  return (recallItems || [])
+    .filter(i => i.ahead !== null)
+    .sort((a, b) => b.ahead - a.ahead);
+}
+function startAhead() {
+  const refs = aheadPicks().slice(0, AHEAD_MAX)
+    .map(({ card }) => ({ id: card.id, last_review: card.last_review }));
+  const btn = document.getElementById('rc-ahead');
+  btn.disabled = true;
+  whenSaved(() => {                  // a review still being saved would not be known yet
+    google.script.run
+      .withSuccessHandler(cards => {
+        btn.disabled = false;
+        if (!cards || !cards.length) {
+          wText('rc-summary', 'Those cards were reviewed since. Reload to see where they stand.');
+          return;
+        }
+        beginSession(cards);
+      })
+      .withFailureHandler(err => {
+        btn.disabled = false;
+        wText('rc-summary', 'Could not load the cards: ' + err.message);
+      })
+      .getCardsIfUnchanged(refs);
+  }, SAVE_WAIT_MS);
 }
 
 function toCsv(res) {
@@ -3324,7 +3384,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.19.3';
+const APP_VERSION = '2026.11.19.4';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

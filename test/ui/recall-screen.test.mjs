@@ -147,5 +147,71 @@ await test('titles are text; an empty deck; errors and Reload; Home', async () =
   bad.w.close();
 });
 
+
+// ── Review ahead
+const full = (row) => ({ ...row, keywords: 'a;b;c', back_content: 'B' + row.id,
+  back_type: 'text' });
+await test('Review ahead: the button counts cards near their failed gap, not due', async () => {
+  const env = await open();
+  assert.equal(env.$('rc-ahead').hidden, false);
+  assert.equal(env.$('rc-ahead').textContent, 'Review ahead (1)');
+  assert.equal(env.txt('rc-ahead-note'),
+    '1 card is not due yet but within 25% of the gap where you failed. The closest come first.');
+  env.w.close();
+
+  const none = await open({ recallRows: ROWS.filter((r) => r.id !== 'past') });
+  assert.equal(none.$('rc-ahead').hidden, true, 'nobody near a failed gap: no button');
+  assert.equal(none.$('rc-ahead-note').hidden, true);
+  none.w.close();
+});
+
+await test('Review ahead: asks for the closest 50 with their version, then starts', async () => {
+  const many = Array.from({ length: 60 }, (_, i) =>
+    review('a' + String(i).padStart(2, '0'), 30 + i, 30, { fail_days: 40 }));
+  const env = await open({ recallRows: many, aheadCards: (refs) =>
+    refs.map((r) => full(many.find((m) => m.id === r.id))) });
+  assert.equal(env.$('rc-ahead').textContent, 'Review ahead (50)');
+  assert.match(env.txt('rc-ahead-note'), /^60 cards are not due yet/);
+  env.$('rc-ahead').click();
+  await until(() => env.shown('s-session'));
+  const refs = plain(env.srv.aheadCalls[0]);
+  assert.equal(refs.length, 50);
+  assert.deepEqual(refs.slice(0, 3).map((r) => r.id), ['a59', 'a58', 'a57'], 'furthest first');
+  assert.deepEqual(refs[0], { id: 'a59', last_review: many[59].last_review });
+  assert.equal(env.w.eval('deck.length'), 50);
+  assert.equal(env.w.eval('deck[0].id'), 'a59');
+  assert.equal(env.w.eval('sessionTotal'), 50);
+  env.w.close();
+});
+
+await test('Review ahead: the card shows its record in the session', async () => {
+  const env = await open({ aheadCards: () => [full(ROWS[4])] });
+  env.$('rc-ahead').click();
+  await until(() => env.shown('s-session'));
+  const strip = env.w.document.querySelector('.recall-strip').textContent;
+  assert.match(strip, /gap 4\d d · recall now \d+% · planned 38 d/);
+  assert.match(strip, /failed ✗ 30 d/);
+  env.w.close();
+});
+
+await test('Review ahead: cards reviewed since, and errors, keep you on the screen', async () => {
+  const since = await open({ aheadCards: () => [] });
+  since.$('rc-ahead').click();
+  await sleep(40);
+  assert.equal(since.txt('rc-summary'),
+    'Those cards were reviewed since. Reload to see where they stand.');
+  assert.equal(since.shown('s-recall'), true);
+  assert.equal(since.$('rc-ahead').disabled, false);
+  since.w.close();
+
+  const bad = await open({ aheadCards: () => new Error('offline') });
+  bad.$('rc-ahead').click();
+  await sleep(40);
+  assert.equal(bad.txt('rc-summary'), 'Could not load the cards: offline');
+  assert.equal(bad.shown('s-recall'), true);
+  assert.equal(bad.$('rc-ahead').disabled, false);
+  bad.w.close();
+});
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

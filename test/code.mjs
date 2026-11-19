@@ -350,6 +350,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ` getActivity, forecastFrom_, studyDayOf_, ROLLOVER_HOUR, FORECAST_DAYS,` +
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
     ` rebuildHorizons, replayRecall_, getHorizonCards, applyHorizon, getRecallRows,` +
+    ` getCardsIfUnchanged,` +
     ` tokenize_, sniffType_, imageFormula_, thumbFor_, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
@@ -1489,6 +1490,35 @@ if (isMain) {
     assert.equal(rows[2].last_review, LR, 'a Date cell comes out as an ISO string');
     assert.equal(rows[2].due, '');
     assert.equal(JSON.stringify(rows).includes('secret'), false);
+  });
+
+  test('getCardsIfUnchanged: full cards in the order asked, only those not reviewed since', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', title: 'A', back_content: 'BA', ...sched() });
+    env.put(3, { id: 'b', title: 'B', ...sched({ last_review: '2026-11-18T09:00:00.000Z' }) });
+    env.put(4, { id: 'c', title: 'C', ...sched({ last_review: new Date(LR) }) });   // a Date cell
+    const got = plain(env.api.getCardsIfUnchanged([
+      { id: 'c', last_review: LR },
+      { id: 'b', last_review: LR },              // reviewed since the app read it
+      { id: 'zz', last_review: LR },
+      { id: 'a', last_review: LR },
+      null,
+    ]));
+    assert.deepEqual(got.map((c) => c.id), ['c', 'a']);
+    assert.equal(got[1].back_content, 'BA', 'the whole card, to review it');
+    assert.equal(got[1].trail, '1:G 4:G 12:G 32:G 77:H');
+  });
+
+  test('getCardsIfUnchanged: bad or oversized requests give an empty list', () => {
+    const env = fixture();
+    env.put(2, { id: 'a', ...sched() });
+    assert.deepEqual(plain(env.api.getCardsIfUnchanged(null)), []);
+    assert.deepEqual(plain(env.api.getCardsIfUnchanged({ id: 'a' })), []);
+    assert.deepEqual(plain(env.api.getCardsIfUnchanged([])), []);
+    const many = new Array(201).fill({ id: 'a', last_review: LR });
+    assert.deepEqual(plain(env.api.getCardsIfUnchanged(many)), []);
+    const exact = new Array(200).fill({ id: 'a', last_review: LR });
+    assert.equal(env.api.getCardsIfUnchanged(exact).length, 200);
   });
 
   console.log(failed ? `\n${failed} failed` : '\nall passed');

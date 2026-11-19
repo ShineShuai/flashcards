@@ -42,16 +42,18 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 //          activity { today, days } | Error (getActivity)
 //          horizonCards [..] | Error (getHorizonCards), applyHorizon (changes) => reply
 //          recallRows [..] | Error (getRecallRows)
+//          aheadCards (refs) => [cards] | Error (getCardsIfUnchanged)
 //          server { failFirst, delay, reply }  (updateCard behaviour)
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
           versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, newLimit,
-          activity, horizonCards = [], applyHorizon, recallRows = [], server = {} } = options;
+          activity, horizonCards = [], applyHorizon, recallRows = [], aheadCards,
+          server = {} } = options;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], settingsCalls: [],
                 bootstrapArgs: [], activityArgs: [], dueArgs: [], horizonCalls: [],
-                recallCalls: 0, ...server };
+                recallCalls: 0, aheadCalls: [], ...server };
   const own = html.match(/^const APP_VERSION = '([^']*)';/m)[1];
   const ver = { version: own, url: 'https://script.google.test/macros/s/ID/exec', fail: false,
                 calls: 0, ...versionServer };   // calls: kept out of ev, which orders saves
@@ -145,6 +147,14 @@ export function boot(options = {}) {
             bad({ message: reply.message });
           } else {
             ok(reply);
+          }
+        } else if (fn === 'getCardsIfUnchanged') {
+          srv.aheadCalls.push(args[0]);
+          const reply = aheadCards ? aheadCards(args[0]) : [];
+          if (reply instanceof Error) {
+            bad({ message: reply.message });
+          } else {
+            ok(reply.map((c) => ({ ...c })));
           }
         } else if (fn === 'getRecallRows') {
           srv.recallCalls++;

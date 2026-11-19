@@ -35,7 +35,7 @@ function load(patch = (s) => s, guard = true) {
   const names = 'W initS initD nextD sRecall sForget sShort intervalDays dueDate ' +
     'daysBetween scheduleCard nextInterval forgettingCurve curveFactor LEARNING_STEPS ' +
     'MAX_INTERVAL parseReviewLog holdoutCut replayLoss isScored recallRecord parseTrail ' +
-    'TRAIL_LEN stabilityFor horizonPull recallStatus RECALL_ORDER';
+    'TRAIL_LEN stabilityFor horizonPull recallStatus RECALL_ORDER aheadRatio AHEAD_FRACTION';
   const api = vm.runInContext(
     `${patch(block)}\n${replay}\nHORIZON_GUARD = ${guard};\n` +
     `({${names.split(' ').join(',')}})`, ctx);
@@ -608,6 +608,35 @@ test('recallStatus: risk is how far past the failed gap, else 1 - recall now', (
   assert.equal(safe.recall, api.forgettingCurve(40, 60));
   const weaker = api.recallStatus(standing({ stability: 20 }), now);
   assert.ok(weaker.risk > safe.risk, 'lower stability, higher risk');
+});
+
+
+// ── aheadRatio: Review ahead takes cards near their failed gap that are not due yet ──
+test('aheadRatio: gap / failed gap from 0.75 up, for cards that are not due yet', () => {
+  const now = new Date(2026, 10, 19, 10, 0);                   // gap 40, due 27 Nov: not yet
+  const ratio = (extra) => api.aheadRatio(standing(extra), now);
+  assert.equal(api.AHEAD_FRACTION, 0.75);
+  assert.equal(ratio({ fail_days: 50 }), 0.8);
+  assert.equal(ratio({ fail_days: 40 }), 1, 'at the failed gap');
+  assert.equal(ratio({ fail_days: 30 }), 40 / 30, 'past it, but not due yet');
+  assert.equal(ratio({ fail_days: 53 }), 40 / 53, '0.7547 >= 0.75');
+  assert.equal(ratio({ fail_days: 54 }), null, '0.7407 < 0.75');
+  assert.equal(ratio({ fail_days: 160 }), null, 'far from it');
+  const edge = new Date(2026, 10, 9, 10, 0);                   // gap 30 of a failed gap of 40
+  assert.equal(api.aheadRatio(standing({ fail_days: 40 }), edge), 0.75, 'the limit itself counts');
+});
+test('aheadRatio: not for due cards, other states, no failure or bad dates', () => {
+  const now = new Date(2026, 10, 19, 10, 0);
+  const ratio = (extra) => api.aheadRatio(standing({ fail_days: 50, ...extra }), now);
+  assert.equal(ratio({ due: new Date(2026, 10, 19, 4, 0).toISOString() }), null, 'due now');
+  assert.equal(ratio({ due: new Date(2026, 10, 1, 4, 0).toISOString() }), null, 'overdue');
+  assert.equal(ratio({ due: new Date(2026, 10, 19, 12, 0).toISOString() }), 0.8, 'later today');
+  assert.equal(ratio({ state: 3 }), null);
+  assert.equal(ratio({ state: 0 }), null);
+  assert.equal(ratio({ fail_days: '' }), null);
+  assert.equal(ratio({ fail_days: 0 }), null);
+  assert.equal(ratio({ last_review: '' }), null);
+  assert.equal(ratio({ due: '' }), null);
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

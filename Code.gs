@@ -836,6 +836,29 @@ function getRecallRows() {
   }));
 }
 
+// ─── API: getCardsIfUnchanged (Review ahead) ───────────────────────────────
+// refs: [{ id, last_review }] as the app read them. Returns the cards, in that order,
+// that were not reviewed since (same last_review); the others are left out.
+const AHEAD_REFS_MAX = 200;
+
+function getCardsIfUnchanged(refs) {
+  if (!Array.isArray(refs) || refs.length > AHEAD_REFS_MAX) {
+    return [];
+  }
+  const byId = {};
+  readCards_().forEach(c => {
+    byId[String(c.id)] = c;
+  });
+  const out = [];
+  refs.forEach(ref => {
+    const c = ref && byId[String(ref.id)];
+    if (c && isoOf_(c.last_review) === isoOf_(ref.last_review)) {
+      out.push(c);
+    }
+  });
+  return out;
+}
+
 // ─── API: getStats ─────────────────────────────────────────────────────────
 
 function getStats(offsetMin) {
