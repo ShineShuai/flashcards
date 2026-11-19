@@ -389,13 +389,13 @@ if (isMain) {
     return { ...env, sheet, headers, put };
   }
 
-  test('new sheet has title, 19 columns and text formats below the header', () => {
+  test('new sheet has title, 20 columns and text formats below the header', () => {
     const env = loadCodeGs();
     env.api.setupSheet();
     const sheet = env.sheets.get('cards');
     assert.deepEqual([...env.api.HEADERS].slice(0, 3), ['id', 'title', 'keywords']);
     assert.equal(sheet.get(1, 2), 'title');
-    assert.equal(env.api.HEADERS.length, 19);
+    assert.equal(env.api.HEADERS.length, 20);
     assert.equal(sheet.fmt.get('2,3'), '@');                    // keywords
     assert.equal(sheet.fmt.get('1000,14'), '@');                // last_review
     assert.equal(sheet.fmt.get('1000,19'), '@');                // trail
@@ -476,7 +476,7 @@ if (isMain) {
     env.api.updateCard('a', fsrsFor());
     assert.equal(env.stats.locks, 1);
     const headers = env.sheet.getRange(1, 1, 1, 20).getValues()[0].filter(Boolean);
-    assert.equal(headers.length, 3 + 14);
+    assert.equal(headers.length, 3 + 15);
     assert.equal(new Set(headers).size, headers.length);
     env.api.updateCard('a', fsrsFor({ reps: 5 }));
     assert.equal(env.stats.locks, 1, 'no lock once the columns exist');
@@ -661,6 +661,24 @@ if (isMain) {
     const c = plain(out.api.bootstrap()).config;
     assert.match(c.rejected[0].reason, /^w\[7\] outside/);
     assert.equal(c.retention, 0.9);
+  });
+
+  test('horizon_guard: default on, stored true/false, null removes it, junk rejected', () => {
+    const env = fixture();
+    assert.equal(plain(env.api.bootstrap()).config.horizon_guard, true);
+    const off = env.api.saveSettings({ horizon_guard: false });
+    assert.equal(off.ok, true);
+    assert.equal(off.config.horizon_guard, false);
+    assert.deepEqual(plain(off.config.overridden), ['horizon_guard']);
+    assert.equal(env.sheets.get('settings').get(2, 2), 'false');
+    assert.equal(env.api.saveSettings({ horizon_guard: 'false' }).ok, false);
+    const on = env.api.saveSettings({ horizon_guard: null });
+    assert.equal(on.config.horizon_guard, true);
+    assert.deepEqual(plain(on.config.overridden), []);
+    const junk = withSettings([['horizon_guard', 'maybe', '', '']]);
+    const c = plain(junk.api.bootstrap()).config;
+    assert.equal(c.horizon_guard, true, 'a malformed value keeps the default');
+    assert.equal(c.rejected[0].key, 'horizon_guard');
   });
 
   test('saveSettings: validates first, upserts, clears, records w in weights_history', () => {
@@ -1199,7 +1217,10 @@ if (isMain) {
     const env = fixture();
     env.put(2, { id: 'a', fail_days: 77 });
     const col = (h) => env.headers.indexOf(h) + 1;
-    env.api.updateCard('a', fsrsFor({ ok_days: 32, fail_days: '', trail: '1:G 4:G 12:H' }));
+    env.api.updateCard('a', fsrsFor({
+      ok_days: 32, fail_days: '', cap_days: 65.45, trail: '1:G 4:G 12:H',
+    }));
+    assert.equal(env.sheet.get(2, col('cap_days')), 65.45);
     assert.equal(env.sheet.get(2, col('ok_days')), 32);
     assert.equal(env.sheet.get(2, col('fail_days')), '', 'a beaten failure is cleared');
     assert.equal(env.sheet.get(2, col('trail')), '1:G 4:G 12:H');
@@ -1237,6 +1258,10 @@ if (isMain) {
       logRow(0, 'e', 3, 2), logRow(2, 'e', 3, 2),            // Good at 2
       logRow(10, 'e', 2, 2), logRow(18, 'e', 3, 2),          // Hard at 8, Good at 8: beaten
       logRow(21, 'e', 3, 2),                                 // Good at 3: ok_days stays 8
+      logRow(0, 'f', 3, 2), logRow(10, 'f', 2, 2),           // Hard at 10: cap 8.5
+      logRow(17, 'f', 3, 2),                                 // Good at 7 < 10: cap x1.3
+      logRow(0, 'g', 3, 2), logRow(3, 'g', 1.5, 2),          // Recap at 3: cap 2.25
+      logRow(4, 'g', 3, 2),                                  // Good at 1: cap rounded to 2 places
     ];
     const res = env0().api.replayRecall_(rows, 0);
     const a = res.cards.a;
@@ -1250,7 +1275,16 @@ if (isMain) {
     assert.equal(e.trail.join(' '), '2:G 8:H 8:G 3:G');
     assert.equal(e.ok, 8, 'ok_days is the longest gap, not the latest');
     assert.equal(e.fail, 0, 'a Good at exactly the failed gap beats it');
-    assert.equal(res.counted, 7 + 3 + 4);
+    const f = res.cards.f;
+    assert.equal(f.trail.join(' '), '10:H 7:G');
+    assert.equal(f.fail, 10);
+    assert.equal(f.cap, 11.05, 'a pass below the failed gap raises the cap by 1.3');
+    assert.equal(e.cap, 0, 'beaten: the cap is lifted');
+    assert.equal(a.cap, 0, 'Again: no cap');
+    const g = res.cards.g;
+    assert.equal(g.cap, Math.round(2.25 * 1.3 * 100) / 100);
+    assert.notEqual(g.cap, 2.25 * 1.3, 'the cap is kept to 2 decimals');
+    assert.equal(res.counted, 7 + 3 + 4 + 2 + 2);
   });
 
   test('app and log replay build the same record (cap, clearing, late reviews)', () => {
@@ -1276,6 +1310,7 @@ if (isMain) {
     ];
     let card = { state: 0 };
     const rows = [];
+    const states = [];
     plan.forEach(([rating, wait]) => {
       clock.t += wait * 86400000;
       const before = card.state;
@@ -1283,12 +1318,18 @@ if (isMain) {
       const record = app.recallRecord(card, rating, new Date(fsrs.last_review));
       rows.push([fsrs.last_review, 'c', rating, before]);
       card = { ...card, ...fsrs, ...record };
+      states.push({ trail: card.trail || '', ok: Number(card.ok_days) || 0,
+                    fail: Number(card.fail_days) || 0, cap: Number(card.cap_days) || 0 });
     });
-    const got = env0().api.replayRecall_(rows).cards.c;
-    assert.equal(got.trail.length, 8, 'the trail keeps the newest 8');
-    assert.equal(got.trail.join(' '), card.trail);
-    assert.equal(got.ok, Number(card.ok_days) || 0);
-    assert.equal(got.fail, Number(card.fail_days) || 0);
+    let capped = 0;
+    states.forEach((want, k) => {
+      const got = env0().api.replayRecall_(rows.slice(0, k + 1)).cards.c;
+      assert.deepEqual({ trail: got.trail.join(' '), ok: got.ok, fail: got.fail, cap: got.cap },
+        want, 'after review ' + (k + 1));
+      capped += want.cap > 0 ? 1 : 0;
+    });
+    assert.ok(capped >= 3, 'the plan passes through probation');
+    assert.equal(states[states.length - 1].trail.split(' ').length, 8, 'the trail keeps 8');
   });
 
   test('rebuildHorizons fills only cards with counted reviews; re-run is stable', () => {
@@ -1306,6 +1347,7 @@ if (isMain) {
     assert.equal(env.sheet.get(2, col('trail')), '1:G 4:H');
     assert.equal(env.sheet.get(2, col('ok_days')), 1);
     assert.equal(env.sheet.get(2, col('fail_days')), 4);
+    assert.equal(env.sheet.get(2, col('cap_days')), 3.4, 'Hard at 4: 0.85 * 4');
     assert.equal(env.sheet.fmt.get('2,' + col('trail')), '@');
     assert.equal(env.sheet.get(3, col('trail')), '7:G');
     assert.equal(env.sheet.get(3, col('ok_days')), 7);

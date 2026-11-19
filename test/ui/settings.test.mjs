@@ -15,7 +15,7 @@ async function test(name, fn) {
 }
 const plain = (x) => JSON.parse(JSON.stringify(x));
 const BASE_W = plain(boot({ cards: [] }).w.eval('W.slice()'));
-const DEFAULTS = { retention: 0.94, max_interval: 365, new_per_day: 0 };
+const DEFAULTS = { retention: 0.94, max_interval: 365, new_per_day: 0, horizon_guard: true };
 
 // A server that keeps the settings in `cfg`, like Config.gs: null removes an override.
 function server(start = {}) {
@@ -54,6 +54,11 @@ const save = async (env) => {
   await sleep(10);
 };
 const calls = (env) => plain(env.srv.settingsCalls.map((c) => c.patch));
+const flip = async (env, on) => {
+  env.$('set-guard').checked = on;
+  env.$('set-guard').dispatchEvent(new env.w.Event('change'));
+  await sleep(10);
+};
 
 await test('the form shows the settings in force', async () => {
   const env = await open({ retention: 0.9, max_interval: 180, new_per_day: 15,
@@ -61,6 +66,29 @@ await test('the form shows the settings in force', async () => {
   assert.deepEqual(form(env), { retention: '0.9', max: '180', fresh: '15' });
   const plainEnv = await open();
   assert.deepEqual(form(plainEnv), { retention: '0.94', max: '365', fresh: '0' });
+});
+
+await test('the guard switch saves at once: off is stored, on removes the override', async () => {
+  const env = await open();
+  assert.equal(env.$('set-guard').checked, true);
+  await flip(env, false);
+  assert.deepEqual(calls(env), [{ horizon_guard: false }]);
+  assert.equal(env.w.eval('HORIZON_GUARD'), false);
+  assert.equal(env.$('set-guard').checked, false);
+  await flip(env, true);
+  assert.deepEqual(calls(env), [{ horizon_guard: false }, { horizon_guard: null }]);
+  assert.equal(env.w.eval('HORIZON_GUARD'), true);
+  const off = await open({ horizon_guard: false, overridden: ['horizon_guard'] });
+  assert.equal(off.$('set-guard').checked, false, 'the form shows the switch in force');
+});
+
+await test('a rejected switch change puts the checkbox back', async () => {
+  const refuse = () => ({ ok: false, errors: { horizon_guard: 'x' } });
+  const env = await open({}, { saveSettings: refuse });
+  await flip(env, false);
+  assert.equal(env.$('set-guard').checked, true);
+  assert.equal(env.w.eval('HORIZON_GUARD'), true);
+  assert.match(env.txt('set-result'), /^Rejected/);
 });
 
 await test('Save sends only what changed; the app uses it at once', async () => {

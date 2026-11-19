@@ -13,7 +13,8 @@ const DEFAULTS = {
   ],
   retention: 0.94,      // interval = days until predicted recall falls to this
   max_interval: 365,    // days; caps the scheduled interval only
-  new_per_day: 0        // new cards introduced per study day; 0 = no limit
+  new_per_day: 0,       // new cards introduced per study day; 0 = no limit
+  horizon_guard: true   // after Hard/Recap the next interval stays below the failed gap
 };
 
 // What an override may hold. The w bounds are py-fsrs 6.3.2's parameter bounds
@@ -42,6 +43,9 @@ function checkSetting_(key, v) {
   if (key === 'new_per_day') {
     return inRange(v, LIMITS.new_per_day) && v % 1 === 0
       ? '' : 'expected a whole number in ' + LIMITS.new_per_day.join('–');
+  }
+  if (key === 'horizon_guard') {
+    return typeof v === 'boolean' ? '' : 'expected true or false';
   }
   if (key === 'w') {
     if (!Array.isArray(v) || v.length !== DEFAULTS.w.length) {

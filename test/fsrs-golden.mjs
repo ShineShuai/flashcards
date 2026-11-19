@@ -15,7 +15,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const html = fs.readFileSync(path.join(here, '..', 'index.html'), 'utf8');
 const golden = JSON.parse(fs.readFileSync(path.join(here, 'fsrs-golden.json'), 'utf8'));
 
-function load(patch = (s) => s) {
+function load(patch = (s) => s, guard = true) {
   const block = html.match(/\/\/ @fsrs-begin([\s\S]*?)\/\/ @fsrs-end/)[1];
   const replay = html.match(/\/\/ @replay-begin([\s\S]*?)\/\/ @replay-end/)[1];
   const clock = { t: Date.now() };
@@ -34,13 +34,16 @@ function load(patch = (s) => s) {
   const ctx = vm.createContext({ Date: FakeDate, Math });
   const names = 'W initS initD nextD sRecall sForget sShort intervalDays dueDate ' +
     'daysBetween scheduleCard nextInterval forgettingCurve curveFactor LEARNING_STEPS ' +
-    'MAX_INTERVAL parseReviewLog holdoutCut replayLoss isScored recallRecord parseTrail TRAIL_LEN';
+    'MAX_INTERVAL parseReviewLog holdoutCut replayLoss isScored recallRecord parseTrail ' +
+    'TRAIL_LEN stabilityFor';
   const api = vm.runInContext(
-    `${patch(block)}\n${replay}\n({${names.split(' ').join(',')}})`, ctx);
+    `${patch(block)}\n${replay}\nHORIZON_GUARD = ${guard};\n` +
+    `({${names.split(' ').join(',')}})`, ctx);
   const at = (...args) => {
     clock.t = new FakeDate(...args).getTime();
   };
-  return { api, at, FakeDate };
+  const setGuard = (on) => vm.runInContext(`HORIZON_GUARD = ${on}`, ctx);
+  return { api, at, FakeDate, setGuard };
 }
 
 let failed = 0;
@@ -58,7 +61,7 @@ const close = (a, b, msg) => {
   assert.ok(Math.abs(a - b) <= tol, `${msg}: got ${a}, want ${b}`);
 };
 
-const { api, at, FakeDate } = load();
+const { api, at, FakeDate, setGuard } = load();
 
 // ── py-fsrs parity ──────────────────────────────────────────────────────────
 test('weights equal py-fsrs 6.3.2 defaults', () => {
@@ -70,7 +73,7 @@ test('weights equal py-fsrs 6.3.2 defaults', () => {
 for (const set of golden.sets) {
   // a fresh app per weight set; weights are replaced in place
   const withWeights = (patch) => {
-    const loaded = load(patch);
+    const loaded = load(patch, false);               // py-fsrs has no horizon guard
     loaded.api.W.splice(0, loaded.api.W.length, ...set.parameters);
     return loaded.api;
   };
@@ -213,6 +216,7 @@ test('replay: longer stability scores better here; Again is the only forgotten r
 });
 
 test('trajectories equal py-fsrs review_card (Easy start; Good start, 10 min/1 h)', () => {
+  setGuard(false);                                   // py-fsrs has no horizon guard
   for (const { ratings, intervals } of golden.trajectories) {
     at(2026, 10, 6, 9, 0);
     let card = { state: 0 };
@@ -227,6 +231,7 @@ test('trajectories equal py-fsrs review_card (Easy start; Good start, 10 min/1 h
       }
     });
   }
+  setGuard(true);
 });
 test('MAX_INTERVAL caps scheduled_days, not stability', () => {
   at(2026, 10, 6, 9, 0);
@@ -347,15 +352,16 @@ const reviewCard = (extra = {}) => ({
 test('recallRecord: Good and Easy raise ok_days and add a trail entry in study days', () => {
   const now = new Date(2026, 10, 11, 10, 0);                       // gap 10
   const good = api.recallRecord(reviewCard({ ok_days: 4, trail: '1:G' }), 3, now);
-  assert.deepEqual({ ...good }, { ok_days: 10, fail_days: '', trail: '1:G 10:G' });
+  assert.deepEqual({ ...good }, { ok_days: 10, fail_days: '', cap_days: '', trail: '1:G 10:G' });
   const easy = api.recallRecord(reviewCard({ ok_days: 30 }), 4, now);
-  assert.deepEqual({ ...easy }, { ok_days: 30, fail_days: '', trail: '10:E' });
+  assert.deepEqual({ ...easy }, { ok_days: 30, fail_days: '', cap_days: '', trail: '10:E' });
 });
 test('recallRecord: Hard, Recap and Again set fail_days to the gap; ok_days is kept', () => {
   const now = new Date(2026, 10, 11, 10, 0);
-  for (const [rating, code] of [[2, 'H'], [1.5, 'R'], [1, 'A']]) {
+  for (const [rating, code, cap] of [[2, 'H', 8.5], [1.5, 'R', 7.5], [1, 'A', '']]) {
     const rec = api.recallRecord(reviewCard({ ok_days: 6, fail_days: 40 }), rating, now);
-    assert.deepEqual({ ...rec }, { ok_days: 6, fail_days: 10, trail: '10:' + code });
+    assert.deepEqual({ ...rec },
+      { ok_days: 6, fail_days: 10, cap_days: cap, trail: '10:' + code });
   }
 });
 test('recallRecord: a failure is beaten by Good/Easy at that gap or later', () => {
@@ -400,6 +406,110 @@ test('parseTrail ignores what is not "gap:code"; scheduleCard does not touch the
   for (const key of ['trail', 'ok_days', 'fail_days']) {
     assert.equal(key in next, false, key);
   }
+});
+
+// ── horizon guard: after Hard or Recap the next interval stays short of the failed gap ──
+function reviewRecorded(card, rating) {
+  const due = new FakeDate(card.due);
+  if (card.scheduled_days >= 1) {
+    due.setHours(10, 0, 0, 0);
+  }
+  at(due.getTime());
+  const fsrs = api.scheduleCard(card, rating, 0);
+  const record = api.recallRecord(card, rating, new FakeDate(fsrs.last_review));
+  return { ...card, ...fsrs, ...record };
+}
+// Every review on its due day; returns the interval after each rating and the last card.
+function runPlan(ratings, guard) {
+  setGuard(guard);
+  at(2026, 0, 5, 10, 0);
+  let card = { state: 0 };
+  const intervals = [];
+  ratings.forEach((rating, i) => {
+    card = i === 0 ? { ...card, ...api.scheduleCard(card, rating, 0) }
+                   : reviewRecorded(card, rating);
+    intervals.push(card.scheduled_days);
+  });
+  setGuard(true);
+  return { intervals, card };
+}
+const LADDER = [3, 3, 3, 3, 3, 3];                 // gaps 1, 4, 12, 32, 77 d, then due at 77
+const after = (ratings, guard, n = 5) => runPlan([...LADDER, ...ratings], guard)
+  .intervals.slice(LADDER.length, LADDER.length + n);
+
+test('guard trajectories after a Good ladder 1, 4, 12, 32, 77: Hard at 77 d', () => {
+  assert.deepEqual(after([2, 3, 3, 3, 3], false), [134, 239, 365, 365, 365]);
+  assert.deepEqual(after([2, 3, 3, 3, 3], true), [65, 85, 157, 278, 365]);
+});
+test('guard trajectories: Recap at 77 d', () => {
+  assert.deepEqual(after([1.5, 3, 3, 3, 3], false), [77, 144, 256, 365, 365]);
+  assert.deepEqual(after([1.5, 3, 3, 3, 3], true), [58, 75, 98, 179, 314]);
+});
+test('guard trajectories: three Hard in a row shorten, a pass at the failed gap lifts', () => {
+  assert.deepEqual(after([2, 2, 2, 3, 3], false), [134, 197, 260, 358, 365]);
+  assert.deepEqual(after([2, 2, 2, 3, 3], true), [65, 55, 47, 61, 90]);
+});
+test('guard does not change Again: relearning steps and graduation are the same', () => {
+  const off = after([1, 3, 3, 3, 3, 3, 3], false, 7);
+  const on = after([1, 3, 3, 3, 3, 3, 3], true, 7);
+  assert.ok(on[0] < 1, 'Again from Review is due at once');
+  assert.deepEqual(on, off);
+  assert.deepEqual(on.slice(1), [2, 4, 7, 13, 21, 35]);
+});
+test('guard keeps stability consistent with the interval it shortens', () => {
+  const { card } = runPlan([...LADDER, 2], true);
+  assert.equal(card.scheduled_days, 65);
+  assert.equal(api.intervalDays(card.stability), 65);
+  assert.equal(card.cap_days, 65.45);
+  assert.equal(card.fail_days, 77);
+  const off = runPlan([...LADDER, 2], false).card;
+  assert.ok(card.stability < off.stability, 'the guard only lowers stability');
+});
+test('stabilityFor is the inverse of intervalDays', () => {
+  for (const days of [1, 2, 7, 65, 200, 365]) {
+    assert.equal(api.intervalDays(api.stabilityFor(days)), days);
+  }
+});
+test('guard: the cap survives uncounted reviews and applies at relearning graduation', () => {
+  const last = new Date(2026, 10, 6, 8, 0).toISOString();
+  at(2026, 10, 6, 10, 0);
+  const base = { stability: 400, difficulty: 5, scheduled_days: 60, last_review: last,
+                 fail_days: 40, cap_days: 20 };
+  const sameDay = { ...base, state: 2 };                         // gap 0: not counted
+  assert.deepEqual({ ...api.recallRecord(sameDay, 3, new FakeDate()) }, {});
+  assert.ok(api.scheduleCard(sameDay, 3, 0).scheduled_days <= 20);
+  const relearn = { ...base, state: 3, stability: 6, cap_days: 1 };
+  setGuard(false);
+  assert.ok(api.scheduleCard(relearn, 3, 0).scheduled_days > 1);
+  setGuard(true);
+  assert.equal(api.scheduleCard(relearn, 3, 0).scheduled_days, 1);
+});
+test('guard: no cap, no failure on record, or guard off: FSRS interval unchanged', () => {
+  at(2026, 10, 11, 10, 0);
+  const card = { state: 2, stability: 60, difficulty: 6, scheduled_days: 38,
+                 last_review: new Date(2026, 9, 2, 10).toISOString() };   // gap 40
+  const plain = api.scheduleCard(card, 3, 0);
+  assert.equal(api.scheduleCard({ ...card, fail_days: 90 }, 3, 0).scheduled_days,
+    plain.scheduled_days, 'a failure alone sets no cap');
+  setGuard(false);
+  const capped = { ...card, fail_days: 90, cap_days: 5 };
+  assert.equal(api.scheduleCard(capped, 3, 0).scheduled_days, plain.scheduled_days);
+  setGuard(true);
+  assert.ok(api.scheduleCard(capped, 3, 0).scheduled_days <= 7, 'on: 5 * 1.3 = 6.5 -> 7');
+});
+test('recallRecord cap: Hard .85, Recap .75 of the gap, x1.3 per pass, lifted at the gap', () => {
+  const now = new Date(2026, 10, 11, 10, 0);                     // gap 10
+  const rec = (extra, rating) => api.recallRecord(reviewCard(extra), rating, now);
+  assert.equal(rec({}, 2).cap_days, 8.5);
+  assert.equal(rec({}, 1.5).cap_days, 7.5);
+  assert.equal(rec({ cap_days: 9 }, 1).cap_days, '', 'Again clears the cap');
+  assert.equal(rec({ fail_days: 30, cap_days: 25.5 }, 3).cap_days, 33.15, 'a pass below the gap');
+  assert.equal(rec({ fail_days: 30, cap_days: 25.5 }, 3).fail_days, 30);
+  assert.equal(rec({ fail_days: 10, cap_days: 8.5 }, 4).cap_days, '', 'a pass at the gap lifts');
+  assert.equal(rec({ cap_days: 8.5 }, 3).cap_days, '', 'a cap without a failure is dropped');
+  const tiny = rec({ fail_days: 30, cap_days: 2.25 }, 3).cap_days;
+  assert.equal(tiny, Math.round(2.25 * 1.3 * 100) / 100);
+  assert.notEqual(tiny, 2.25 * 1.3, 'the cap is kept to 2 decimals');
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

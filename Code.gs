@@ -13,13 +13,13 @@ const HEADERS = [
   'id', 'title', 'keywords', 'back_content', 'back_type',
   'due', 'stability', 'difficulty', 'elapsed_days',
   'scheduled_days', 'reps', 'lapses', 'state', 'last_review',
-  'weak_keywords', 'miss_streak', 'ok_days', 'fail_days', 'trail'
+  'weak_keywords', 'miss_streak', 'ok_days', 'fail_days', 'trail', 'cap_days'
 ];
 // Columns the app writes on every review
 const FSRS_FIELDS = [
   'stability', 'difficulty', 'elapsed_days', 'scheduled_days',
   'reps', 'lapses', 'state', 'last_review', 'due',
-  'weak_keywords', 'miss_streak', 'ok_days', 'fail_days', 'trail'
+  'weak_keywords', 'miss_streak', 'ok_days', 'fail_days', 'trail', 'cap_days'
 ];
 // Kept as plain text so Sheets never converts "3/4", "1.5", "=x" or ISO dates
 const TEXT_COLUMNS = [
@@ -607,14 +607,17 @@ function updateCard(id, fsrs, meta) {
 }
 
 // ─── Recall record: rebuild from the review log ────────────────────────────
-// The app keeps ok_days, fail_days and trail per card (recallRecord in index.html).
-// This replays the review log to fill them for reviews made before the columns
-// existed. Same rules as the app: a review counts when it was made in Review state
+// The app keeps ok_days, fail_days, cap_days and trail per card (recallRecord in
+// index.html). This replays the review log to fill them for reviews made before the
+// columns existed. Same rules as the app: a review counts when it was made in Review state
 // (state_before 2) and the log holds an earlier review of the card to measure the gap
 // from (study days); learning steps and same-day reviews do not count. The result
 // depends only on the log, so it is safe to re-run. Keep both rules equal.
-const RECALL_COLUMNS = ['ok_days', 'fail_days', 'trail'];
+const RECALL_COLUMNS = ['ok_days', 'fail_days', 'trail', 'cap_days'];
 const TRAIL_LEN = 8;
+const GUARD_FACTORS = { 1.5: 0.75, 2: 0.85 };   // Recap, Hard: cap = factor * failed gap
+const GUARD_GROWTH = 1.3;                         // the cap grows by this per pass
+const round2_ = x => Math.round(x * 100) / 100;
 const TRAIL_CODES = { 1: 'A', 1.5: 'R', 2: 'H', 3: 'G', 4: 'E' };
 
 // UTC offset of the script time zone at that time, daylight saving included.
@@ -627,7 +630,7 @@ function tzOffsetMs_(ms) {
 
 // rows: review_log rows (time, card id, rating, state_before, ...). offsetMin (optional)
 // fixes the UTC offset of the study days; without it the script time zone is used.
-// Returns { cards: { id: { ok, fail, trail: ['gap:code'] } }, counted }.
+// Returns { cards: { id: { ok, fail, cap, trail: ['gap:code'] } }, counted }.
 function replayRecall_(rows, offsetMin) {
   const fixed = typeof offsetMin === 'number' && isFinite(offsetMin);
   const events = rows
@@ -644,7 +647,7 @@ function replayRecall_(rows, offsetMin) {
   events.forEach(e => {
     const offsetMs = fixed ? offsetMin * 60000 : tzOffsetMs_(e.ms);
     const day = studyDayOf_(e.ms, offsetMs);
-    const st = cards[e.id] || (cards[e.id] = { day: null, ok: 0, fail: 0, trail: [] });
+    const st = cards[e.id] || (cards[e.id] = { day: null, ok: 0, fail: 0, cap: 0, trail: [] });
     const code = TRAIL_CODES[e.rating];
     const gap = st.day === null ? 0 : day - st.day;
     if (e.before === 2 && code && gap >= 1) {
@@ -653,8 +656,10 @@ function replayRecall_(rows, offsetMin) {
         if (st.fail && gap >= st.fail) {
           st.fail = 0;
         }
+        st.cap = st.fail && st.cap ? round2_(st.cap * GUARD_GROWTH) : 0;
       } else {
         st.fail = gap;
+        st.cap = GUARD_FACTORS[e.rating] ? round2_(GUARD_FACTORS[e.rating] * gap) : 0;
       }
       st.trail.push(gap + ':' + code);
       if (st.trail.length > TRAIL_LEN) {
@@ -667,8 +672,8 @@ function replayRecall_(rows, offsetMin) {
   return { cards: cards, counted: counted };
 }
 
-// Fills ok_days, fail_days and trail of every card that has counted reviews in the
-// log; other cards keep their cells. Run it from Flash > Rebuild recall history (or
+// Fills ok_days, fail_days, cap_days and trail of every card that has counted reviews in
+// the log; other cards keep their cells. Run it from Flash > Rebuild recall history (or
 // the editor), not while reviewing: a review saved meanwhile may be overwritten.
 function rebuildHorizons(offsetMin) {
   const sheet   = getSheet_();
@@ -690,9 +695,13 @@ function rebuildHorizons(offsetMin) {
     if (!st || !st.trail.length) {
       return;
     }
-    cells[0][i][0] = st.ok || '';
-    cells[1][i][0] = st.fail || '';
-    cells[2][i][0] = st.trail.join(' ');
+    const values = {
+      ok_days: st.ok || '', fail_days: st.fail || '', cap_days: st.cap || '',
+      trail: st.trail.join(' ')
+    };
+    RECALL_COLUMNS.forEach((name, k) => {
+      cells[k][i][0] = values[name];
+    });
     result.written += 1;
   });
   if (!result.written) {

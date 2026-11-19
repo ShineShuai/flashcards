@@ -15,7 +15,7 @@ const cfg = vm.runInContext(
   `${read('Config.gs')}\n({ DEFAULTS, LIMITS, checkSetting_ })`, vm.createContext({}));
 const block = read('index.html').match(/\/\/ @fsrs-begin([\s\S]*?)\/\/ @fsrs-end/)[1];
 const app = vm.runInContext(
-  `${block}\n({ W, DESIRED_RETENTION, MAX_INTERVAL })`, vm.createContext({ Math }));
+  `${block}\n({ W, DESIRED_RETENTION, MAX_INTERVAL, HORIZON_GUARD })`, vm.createContext({ Math }));
 
 let failed = 0;
 const test = (name, fn) => {
@@ -33,6 +33,7 @@ test('DEFAULTS equal the FSRS block of index.html', () => {
   assert.deepEqual(plain(cfg.DEFAULTS.w), plain(app.W));
   assert.equal(cfg.DEFAULTS.retention, app.DESIRED_RETENTION);
   assert.equal(cfg.DEFAULTS.max_interval, app.MAX_INTERVAL);
+  assert.equal(cfg.DEFAULTS.horizon_guard, app.HORIZON_GUARD);
 });
 
 test('DEFAULTS.w equals the py-fsrs defaults of the golden vectors', () => {
@@ -70,6 +71,10 @@ test('validation rejects NaN, strings, wrong types and lengths', () => {
   assert.notEqual(cfg.checkSetting_('w', [...w.slice(1), NaN]), '');
   assert.notEqual(cfg.checkSetting_('w', [...w, 1]), '');
   assert.notEqual(cfg.checkSetting_('retention', '0.9'), '');
+  assert.equal(cfg.checkSetting_('horizon_guard', false), '');
+  for (const bad of ['false', 0, 1, null, 'true']) {
+    assert.notEqual(cfg.checkSetting_('horizon_guard', bad), '', String(bad));
+  }
   assert.notEqual(cfg.checkSetting_('retention', Infinity), '');
   assert.notEqual(cfg.checkSetting_('max_interval', 29), '');
   assert.equal(cfg.checkSetting_('max_interval', 3650), '');
