@@ -1,6 +1,6 @@
 // Run: node test/ui/recall.test.mjs   (needs: npm install --no-save jsdom)
-// Recall strip (gap, recall now, trail, best/failed), the rating toast, the recall
-// fields in the save, and undo.
+// Recall strip (gap, recall now, trail, best/failed, probation), the rating toast, the
+// recall fields in the save, the horizon guard's interval, and undo.
 import assert from 'node:assert/strict';
 import { boot, card, until } from './harness.mjs';
 
@@ -78,9 +78,14 @@ const chips = (el) => [...el.querySelectorAll('.rs-chip')].map((c) => c.textCont
   assert.equal(fsrs.trail, '1:G 4:G 12:G 32:G 77:H 40:H');
   assert.equal(fsrs.ok_days, 32);
   assert.equal(fsrs.fail_days, 40);
+  assert.equal(fsrs.cap_days, 34, 'Hard at 40 d: cap 0.85 * 40');
+  assert.equal(fsrs.scheduled_days, 34, 'the guard keeps the next interval at the cap');
+  const was = w.withGuard(false, () => w.scheduleCard(reviewCard(), 2, 0)).scheduled_days;
+  assert.ok(was > 38, 'without the guard a Hard would grow the interval');
   const toast = $('rate-toast');
   assert.ok(toast.classList.contains('on'));
-  assert.equal(toast.textContent, `Hard at 40 d → next ${w.formatInterval(fsrs.scheduled_days)}`);
+  assert.equal(toast.textContent,
+    `Hard at 40 d → next ${w.formatInterval(34)} (was ${w.formatInterval(was)})`);
 
   w.undoRating();
   await until(() => saved.length === 2);
@@ -90,6 +95,7 @@ const chips = (el) => [...el.querySelectorAll('.rs-chip')].map((c) => c.textCont
   assert.equal(undo.fsrs.trail, '1:G 4:G 12:G 32:G 77:H');
   assert.equal(undo.fsrs.ok_days, 32);
   assert.equal(undo.fsrs.fail_days, 77);
+  assert.equal(undo.fsrs.cap_days, '', 'the cap before the rating (none) comes back');
   assert.equal(strips(w)[0].querySelector('.rs-fail').textContent, 'failed ✗ 77 d');
 
   // after the undo the card is as before: a Good at 40 d does not beat the failure at 77 d
@@ -113,4 +119,44 @@ const chips = (el) => [...el.querySelectorAll('.rs-chip')].map((c) => c.textCont
   assert.equal(env.$('rate-toast').textContent.startsWith('Easy at 40 d → next '), true);
   env.w.close();
   console.log('ok   Easy beyond the failed gap clears fail_days');
+}
+
+// ── probation chip: shown while a cap is active and the guard is on
+{
+  const env = boot({ cards: [reviewCard({ cap_days: 65.45 }), reviewCard({ cap_days: '' })] });
+  await env.start();
+  const { w } = env;
+  const [front] = strips(w);
+  const chip = front.querySelector('.rs-cap');
+  assert.equal(chip.textContent, 'probation: recall at ≥ 77 d to lift');
+  w.eval('HORIZON_GUARD = false');
+  w.renderRecallStrip(w.eval('deck[idx]'));
+  assert.equal(strips(w)[0].querySelector('.rs-cap'), null, 'guard off: no probation chip');
+  w.eval('HORIZON_GUARD = true');
+  w.flipCard();
+  w.rate(3);
+  await until(() => env.saved.length === 1);
+  assert.equal(strips(w)[0].querySelector('.rs-cap'), null, 'no cap, no probation chip');
+  w.close();
+  console.log('ok   probation chip follows the cap and the switch');
+}
+
+// ── the guard is on by default; off, a Hard grows the interval and no "was" shows
+{
+  const env = boot({ cards: [reviewCard()], config: () => ({ horizon_guard: false }) });
+  await env.start();
+  const { w, saved } = env;
+  assert.equal(w.eval('HORIZON_GUARD'), false);
+  w.flipCard();
+  w.rate(2);
+  await until(() => saved.length === 1);
+  assert.ok(saved[0].fsrs.scheduled_days > 38);
+  assert.equal(env.$('rate-toast').textContent.includes('was'), false);
+  assert.equal(saved[0].fsrs.cap_days, 34, 'the record is kept while the guard is off');
+  w.close();
+  const on = boot({ cards: [reviewCard()] });
+  await on.start();
+  assert.equal(on.w.eval('HORIZON_GUARD'), true, 'default: on');
+  on.w.close();
+  console.log('ok   guard off: FSRS interval, record kept; default is on');
 }
