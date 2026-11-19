@@ -226,6 +226,9 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .w-field.w-check { justify-content: flex-start; align-items: flex-start; }
 .w-check input { width: auto; flex: none; margin-top: 3px; }
 .w-block   { margin: 18px 0; }
+.hz-row    { padding: 6px 0; border-top: 1px solid var(--border); font-size: .8rem; }
+.hz-title  { font-weight: 700; overflow-wrap: anywhere; }
+.hz-meta   { color: var(--text2); }
 .w-h       { font-weight: 700; margin-bottom: 6px; }
 .w-p       { font-size: .85rem; color: var(--text2); margin: 6px 0 10px; }
 .w-input   { width: 100%; box-sizing: border-box; padding: 8px 10px; margin-bottom: 8px;
@@ -788,6 +791,18 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
       <div class="w-result" id="set-result" role="status" aria-live="polite"></div>
     </div>
     <div class="w-block">
+      <div class="w-h">Horizon guard: cards already scheduled</div>
+      <p class="w-p">Cards whose last Hard or Recap is not beaten yet, but whose due date lies
+        beyond the guard's cap. Check first; nothing changes until you pull them forward.</p>
+      <button class="btn btn-secondary" id="hz-check" onclick="checkHorizon()">Check cards</button>
+      <button class="btn btn-secondary" id="hz-apply" onclick="applyHorizonPull()" hidden>
+        Pull forward</button>
+      <button class="btn btn-secondary" id="hz-undo" onclick="undoHorizonPull()" hidden>
+        Undo</button>
+      <div class="w-result" id="hz-result" role="status" aria-live="polite"></div>
+      <div class="hz-list" id="hz-list"></div>
+    </div>
+    <div class="w-block">
       <div class="w-h">1 · Weights: review log</div>
       <p class="w-p" id="w-log-info">Loading the review log…</p>
       <button class="btn btn-secondary" id="w-export" onclick="exportReviewLog()" disabled>
@@ -1169,6 +1184,34 @@ function recallRecord(card, rating, now) {
     fail_days: fail || '',
     cap_days:  cap || '',
     trail:     trail.map(t => t.gap + ':' + t.code).join(' ')
+  };
+}
+
+// A card scheduled before the guard existed (or while it was off) can lie beyond its
+// cap. What the guard would have done at its last review: the due date at the cap and
+// stability lowered to match. null when there is nothing to change: no failure with an
+// active cap, already due, or not beyond the cap.
+function horizonPull(card, now) {
+  const cap       = Number(card.cap_days) || 0;
+  const last      = new Date(card.last_review);
+  const due       = new Date(card.due);
+  const stability = Number(card.stability);
+  const guarded = Number(card.state) === 2 && cap > 0 && Number(card.fail_days) > 0;
+  if (!guarded || isNaN(last.getTime()) || isNaN(due.getTime()) || !(stability > 0)) {
+    return null;
+  }
+  if (due <= now) {
+    return null;
+  }
+  const limit  = Math.max(1, Math.round(cap));
+  const target = dueDate(last, limit);
+  if (target >= due) {
+    return null;
+  }
+  return {
+    due:            target.toISOString(),
+    scheduled_days: limit,
+    stability:      +Math.min(stability, stabilityFor(limit)).toFixed(4)
   };
 }
 // @fsrs-end
@@ -2755,6 +2798,142 @@ function saveScheduleSettings(patch) {
     .saveSettings(patch, { source: 'app', note: 'scheduling' });
 }
 
+// ── Horizon guard: pull forward cards that were scheduled past their cap ──────────
+const HORIZON_SHOWN = 30;
+let horizonPlan = [];       // [{ card, pull }] found by the last check
+let horizonUndo = null;     // the changes that restore the last pull-forward
+function fmtDay(iso) {
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+function horizonBusy(on) {
+  ['hz-check', 'hz-apply', 'hz-undo'].forEach(id => {
+    document.getElementById(id).disabled = on;
+  });
+}
+function horizonButtons() {
+  document.getElementById('hz-apply').hidden = !horizonPlan.length;
+  document.getElementById('hz-undo').hidden = !horizonUndo;
+}
+function renderHorizonPlan() {
+  const list = document.getElementById('hz-list');
+  list.textContent = '';
+  horizonPlan.slice(0, HORIZON_SHOWN).forEach(({ card, pull }) => {
+    const row = document.createElement('div');
+    row.className = 'hz-row';
+    const title = document.createElement('div');
+    title.className = 'hz-title';
+    title.textContent = card.title;
+    const meta = document.createElement('div');
+    meta.className = 'hz-meta';
+    const interval = Math.round(card.scheduled_days) + ' d → ' + pull.scheduled_days + ' d';
+    const dates = fmtDay(card.due) + ' → ' + fmtDay(pull.due);
+    meta.textContent = 'failed ✗ ' + card.fail_days + ' d · ' + interval + ' · due ' + dates;
+    row.appendChild(title);
+    row.appendChild(meta);
+    list.appendChild(row);
+  });
+  if (horizonPlan.length > HORIZON_SHOWN) {
+    const more = document.createElement('div');
+    more.className = 'hz-meta';
+    more.textContent = '… and ' + (horizonPlan.length - HORIZON_SHOWN) + ' more';
+    list.appendChild(more);
+  }
+  horizonButtons();
+}
+function checkHorizon() {
+  horizonPlan = [];
+  horizonUndo = null;
+  renderHorizonPlan();
+  if (!HORIZON_GUARD) {
+    wText('hz-result', 'Turn the horizon guard on first.');
+    return;
+  }
+  horizonBusy(true);
+  wText('hz-result', 'Checking…');
+  whenSaved(() => {                // a review still being saved would be read as it was before
+    google.script.run
+      .withSuccessHandler(rows => {
+        const now = new Date();
+        horizonPlan = (rows || [])
+          .map(card => ({ card, pull: horizonPull(card, now) }))
+          .filter(p => p.pull)
+          .sort((a, b) => a.pull.due.localeCompare(b.pull.due));
+        horizonBusy(false);
+        renderHorizonPlan();
+        const n = horizonPlan.length;
+        const are = n === 1 ? ' card is' : ' cards are';
+        wText('hz-result', n
+          ? n + are + ' scheduled past the cap. Pulling forward sets the due date at the cap ' +
+            'and lowers stability to match.'
+          : 'No card is scheduled past its cap. (Flash > Rebuild recall history fills the ' +
+            'cap of cards reviewed before the guard.)');
+      })
+      .withFailureHandler(err => {
+        horizonBusy(false);
+        wText('hz-result', 'Could not check: ' + err.message);
+      })
+      .getHorizonCards();
+  }, 3000);
+}
+function sendHorizon(changes, done) {
+  horizonBusy(true);
+  google.script.run
+    .withSuccessHandler(res => {
+      horizonBusy(false);
+      if (!res || !res.ok) {
+        wText('hz-result', 'Rejected: ' + ((res && res.error) || 'unknown error'));
+        return;
+      }
+      done(res);
+    })
+    .withFailureHandler(err => {
+      horizonBusy(false);
+      wText('hz-result', 'Could not save: ' + err.message);
+    })
+    .applyHorizon(changes);
+}
+function horizonSkipped(res) {
+  const parts = [];
+  if (res.stale) {
+    parts.push(res.stale + ' reviewed since');
+  }
+  if (res.missing) {
+    parts.push(res.missing + ' not found');
+  }
+  if (res.invalid) {
+    parts.push(res.invalid + ' invalid');
+  }
+  return parts.length ? ' Skipped: ' + parts.join(', ') + '.' : '';
+}
+function applyHorizonPull() {
+  const plan = horizonPlan;
+  const changes = plan.map(({ card, pull }) => ({
+    id: card.id, last_review: card.last_review,
+    due: pull.due, scheduled_days: pull.scheduled_days, stability: pull.stability
+  }));
+  sendHorizon(changes, res => {
+    const done = new Set(res.applied);
+    const restore = plan.filter(({ card }) => done.has(String(card.id))).map(({ card }) => ({
+      id: card.id, last_review: card.last_review,
+      due: card.due, scheduled_days: card.scheduled_days, stability: card.stability
+    }));
+    horizonUndo = restore.length ? restore : null;
+    horizonPlan = [];
+    renderHorizonPlan();
+    wText('hz-result', 'Pulled forward ' + res.applied.length + ' cards.' + horizonSkipped(res));
+  });
+}
+function undoHorizonPull() {
+  const changes = horizonUndo;
+  sendHorizon(changes, res => {
+    horizonUndo = null;
+    horizonButtons();
+    wText('hz-result', 'Restored ' + res.applied.length + ' cards.' + horizonSkipped(res));
+  });
+}
+
 function toCsv(res) {
   const cell = v => {
     const s = String(v);
@@ -2917,7 +3096,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.19.1';
+const APP_VERSION = '2026.11.19.2';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

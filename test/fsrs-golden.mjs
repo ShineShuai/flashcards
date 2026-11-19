@@ -35,7 +35,7 @@ function load(patch = (s) => s, guard = true) {
   const names = 'W initS initD nextD sRecall sForget sShort intervalDays dueDate ' +
     'daysBetween scheduleCard nextInterval forgettingCurve curveFactor LEARNING_STEPS ' +
     'MAX_INTERVAL parseReviewLog holdoutCut replayLoss isScored recallRecord parseTrail ' +
-    'TRAIL_LEN stabilityFor';
+    'TRAIL_LEN stabilityFor horizonPull';
   const api = vm.runInContext(
     `${patch(block)}\n${replay}\nHORIZON_GUARD = ${guard};\n` +
     `({${names.split(' ').join(',')}})`, ctx);
@@ -510,6 +510,59 @@ test('recallRecord cap: Hard .85, Recap .75 of the gap, x1.3 per pass, lifted at
   const tiny = rec({ fail_days: 30, cap_days: 2.25 }, 3).cap_days;
   assert.equal(tiny, Math.round(2.25 * 1.3 * 100) / 100);
   assert.notEqual(tiny, 2.25 * 1.3, 'the cap is kept to 2 decimals');
+});
+
+// ── horizonPull: a card scheduled past its cap is moved to the cap ──
+const pulled = (extra = {}) => ({
+  state: 2, stability: 266, difficulty: 6, scheduled_days: 134, fail_days: 77, cap_days: 65.45,
+  last_review: new Date(2026, 9, 20, 10, 0).toISOString(),     // 20 Oct
+  due: new Date(2027, 2, 3, 4, 0).toISOString(),               // 134 d later
+  ...extra,
+});
+test('horizonPull: due moves to the cap, scheduled_days follows, stability matches it', () => {
+  const now = new Date(2026, 10, 19, 10, 0);
+  const pull = api.horizonPull(pulled(), now);
+  assert.equal(pull.scheduled_days, 65);
+  assert.equal(pull.due, new Date(2026, 11, 24, 4, 0).toISOString(), '65 study days after 20 Oct');
+  assert.equal(api.intervalDays(pull.stability), 65);
+  assert.ok(pull.stability < 266);
+  const small = api.horizonPull(pulled({ stability: 5 }), now);
+  assert.equal(small.stability, 5, 'stability is never raised');
+});
+test('horizonPull: nothing to do without a failure and cap, in other states, or when due', () => {
+  const now = new Date(2026, 10, 19, 10, 0);
+  assert.equal(api.horizonPull(pulled({ cap_days: '' }), now), null);
+  assert.equal(api.horizonPull(pulled({ fail_days: '' }), now), null);
+  assert.equal(api.horizonPull(pulled({ state: 3 }), now), null);
+  assert.equal(api.horizonPull(pulled({ stability: 0 }), now), null);
+  assert.equal(api.horizonPull(pulled({ last_review: 'x' }), now), null);
+  assert.equal(api.horizonPull(pulled({ due: '' }), now), null);
+  const later = new Date(2027, 2, 3, 12, 0);
+  assert.equal(api.horizonPull(pulled(), later), null, 'already due: nothing to pull forward');
+});
+test('horizonPull: only beyond the cap; a cap day in the past makes it due now', () => {
+  const now = new Date(2026, 10, 19, 10, 0);
+  const atCap = pulled({ due: new Date(2026, 11, 24, 4, 0).toISOString() });
+  assert.equal(api.horizonPull(atCap, now), null, 'due on the cap day already');
+  const inside = pulled({ due: new Date(2026, 11, 1, 4, 0).toISOString() });
+  assert.equal(api.horizonPull(inside, now), null, 'due before the cap day');
+  const late = api.horizonPull(pulled({ cap_days: 5 }), now);     // cap day 25 Oct, in the past
+  assert.equal(late.scheduled_days, 5);
+  assert.equal(late.due, new Date(2026, 9, 25, 4, 0).toISOString());
+  const tiny = api.horizonPull(pulled({ cap_days: 0.4 }), now);
+  assert.equal(tiny.scheduled_days, 1, 'at least a day');
+});
+
+test('horizonPull gives the state the guard would have produced at that review', () => {
+  for (const rating of [2, 1.5]) {
+    const on = runPlan([...LADDER, rating], true).card;
+    const off = runPlan([...LADDER, rating], false).card;        // scheduled without the guard
+    assert.ok(off.scheduled_days > on.scheduled_days, 'the unguarded card lies past the cap');
+    const pull = api.horizonPull(off, new FakeDate(new Date(off.last_review).getTime() + 3600e3));
+    assert.equal(pull.scheduled_days, on.scheduled_days);
+    assert.equal(pull.due, on.due);
+    assert.equal(pull.stability, on.stability);
+  }
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

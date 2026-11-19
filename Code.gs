@@ -732,6 +732,90 @@ function rebuildHorizonsMenu() {
   return r;
 }
 
+// ─── Horizon guard: cards already scheduled past their cap ─────────────────
+// Candidates: Review-state cards with a failure on record and an active cap_days. The
+// app decides what to change (horizonPull in index.html); this returns slim rows and
+// writes the result, skipping any card that was reviewed since the app read it.
+const HORIZON_MAX = 5000;
+
+function msOf_(v) {
+  return v instanceof Date ? v.getTime() : reviewMs_(v);
+}
+
+function isoOf_(v) {
+  const ms = msOf_(v);
+  return isNaN(ms) ? '' : new Date(ms).toISOString();
+}
+
+function getHorizonCards() {
+  return readCards_()
+    .filter(c => Number(c.state) === 2 && Number(c.fail_days) > 0 && Number(c.cap_days) > 0)
+    .map(c => ({
+      id: String(c.id),
+      title: String(c.title || ''),
+      stability: Number(c.stability),
+      scheduled_days: Number(c.scheduled_days),
+      last_review: isoOf_(c.last_review),
+      due: isoOf_(c.due),
+      ok_days: Number(c.ok_days) || 0,
+      fail_days: Number(c.fail_days),
+      cap_days: Number(c.cap_days)
+    }));
+}
+
+// changes: [{ id, last_review, due, scheduled_days, stability }]; last_review is the
+// version the change was made from. The same call restores an earlier state: send the
+// old values with the same last_review. Nothing is logged: no review took place.
+function applyHorizon(changes) {
+  if (!Array.isArray(changes) || changes.length > HORIZON_MAX) {
+    return { ok: false, error: 'expected a list of at most ' + HORIZON_MAX + ' changes' };
+  }
+  const sheet   = getSheet_();
+  const headers = ensureColumns_(sheet, FSRS_FIELDS);
+  const rows    = Math.max(sheet.getLastRow() - 1, 0);
+  const result  = { ok: true, applied: [], stale: 0, missing: 0, invalid: 0 };
+  const col     = name => headers.indexOf(name) + 1;
+  const row     = {};
+  const seen    = rows ? sheet.getRange(2, col('last_review'), rows, 1).getValues() : [];
+  if (rows) {
+    sheet.getRange(2, col('id'), rows, 1).getValues().forEach((r, i) => {
+      if (!(String(r[0]) in row)) {
+        row[String(r[0])] = i;
+      }
+    });
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    changes.forEach(ch => {
+      const valid = ch && typeof ch === 'object' && ch.id !== undefined &&
+        isFinite(ch.stability) && ch.stability > 0 &&
+        isFinite(ch.scheduled_days) && ch.scheduled_days >= 0 &&
+        isFinite(reviewMs_(ch.due)) && isFinite(reviewMs_(ch.last_review));
+      if (!valid) {
+        result.invalid += 1;
+        return;
+      }
+      const i = row[String(ch.id)];
+      if (i === undefined) {
+        result.missing += 1;
+        return;
+      }
+      if (msOf_(seen[i][0]) !== reviewMs_(ch.last_review)) {
+        result.stale += 1;
+        return;
+      }
+      writeFields_(sheet, i + 2, headers, {
+        stability: ch.stability, scheduled_days: ch.scheduled_days, due: ch.due
+      });
+      result.applied.push(String(ch.id));
+    });
+  } finally {
+    lock.releaseLock();
+  }
+  return result;
+}
+
 // ─── API: getStats ─────────────────────────────────────────────────────────
 
 function getStats(offsetMin) {
