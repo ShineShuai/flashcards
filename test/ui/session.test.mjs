@@ -91,7 +91,7 @@ const past = () => new Date(Date.now() - 1000).toISOString();
   await sleep(5);
   assert.ok(shown('s-complete'), 'no waiting card is shown early');
   assert.equal(txt('cs-title'), 'Done for now');
-  assert.equal(txt('cs-sub'), 'Next: 2 cards in 10m.');
+  assert.match(txt('cs-sub'), /^Next: 2 cards in (10:00|9:5\d)\. Resumes by itself\.$/);
   assert.equal(txt('cs-total'), '3');
 
   // undo reopens the last card; the waiting cards stay queued
@@ -104,7 +104,23 @@ const past = () => new Date(Date.now() - 1000).toISOString();
   await sleep(5);
   assert.ok(shown('s-complete'));
   await until(() => saved.length === 5);   // 3 ratings, the undo, the new rating
-  console.log('ok   waiting cards: not shown early, skip ignores them, done-for-now, undo');
+  assert.notEqual(w.eval('waitTimer'), null, 'countdown runs on the done screen');
+
+  // c1's 10 min pass: the countdown resumes the session by itself, c2 (1 h) keeps waiting
+  w.eval(`deck[3].due = ${JSON.stringify(past())}`);
+  await until(() => shown('s-session'), 3000);
+  assert.equal(txt('card-title'), 'T1');
+  assert.equal(w.eval('waitTimer'), null, 'countdown stopped');
+  w.flipCard();
+  w.rate(3);                                   // Learning + Good: graduates
+  await sleep(5);
+  assert.ok(shown('s-complete'));
+  assert.match(txt('cs-sub'), /^Next: 1 card in (1h 00m|59:\d\d)\. Resumes by itself\.$/);
+
+  // leaving for Home stops the countdown
+  w.showHome();
+  assert.equal(w.eval('waitTimer'), null);
+  console.log('ok   waiting cards: not shown early, skip ignores them, countdown resumes, undo');
 }
 {
   // due while the session goes on: shown at the next card, in queue order

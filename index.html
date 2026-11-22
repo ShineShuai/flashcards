@@ -1473,6 +1473,7 @@ let spellOpen    = false;
 let sessionStats = { total: 0, again: 0, good: 0 };
 let done         = 0;   // cards finished this session (re-queued cards count once)
 let sessionTotal = 0;   // cards at session start
+let waitTimer    = null;   // done screen: interval counting down to the next waiting card
 // A sub-day card (Again / lapse, 10 min step) is queued this many other cards ahead;
 // longer steps (Hard, 1 h) go to the end of the session. Either way it is offered only
 // once its due time has come (card._wait, see isReady).
@@ -1628,6 +1629,9 @@ function whenSaved(fn, timeoutMs) {
 // ═══════════════════════════════════════════════════════════════════════════
 const SCREENS = ['s-loading','s-home','s-session','s-complete','s-weights','s-recall'];
 function show(id) {
+  if (id !== 's-complete') {
+    stopWait();
+  }
   SCREENS.forEach(s => document.getElementById(s).classList.toggle('hidden', s !== id));
   document.body.dataset.screen = id;
 }
@@ -2263,23 +2267,48 @@ function showNext() {
   loadCard(idx);
   updateSkipBadge();
 }
+// Done screen with waiting cards: counts down to the earliest due time, then the
+// session carries on by itself. Any other screen stops the countdown (see show).
 function finishSession() {
+  stopWait();
   const waiting = deck.slice(idx);
-  let title = 'All done!';
-  let sub   = "Today's session is complete.";
-  if (waiting.length) {
-    const ms = Math.min(...waiting.map(c => new Date(c.due).getTime())) - Date.now();
-    const n  = waiting.length;
-    title = 'Done for now';
-    sub   = 'Next: ' + n + (n === 1 ? ' card' : ' cards') + ' in ' +
-            formatInterval(Math.max(1, Math.ceil(ms / 60000)) / 1440) + '.';
-  }
-  document.getElementById('cs-title').textContent = title;
-  document.getElementById('cs-sub').textContent   = sub;
   document.getElementById('cs-total').textContent = sessionStats.total;
   document.getElementById('cs-again').textContent = sessionStats.again;
   document.getElementById('cs-good').textContent  = sessionStats.good;
+  if (!waiting.length) {
+    document.getElementById('cs-title').textContent = 'All done!';
+    document.getElementById('cs-sub').textContent   = "Today's session is complete.";
+    show('s-complete');
+    return;
+  }
+  document.getElementById('cs-title').textContent = 'Done for now';
+  const nextDue = () => Math.min(...waiting.map(c => new Date(c.due).getTime()));
+  const line = () => 'Next: ' + waiting.length + (waiting.length === 1 ? ' card' : ' cards') +
+                     ' in ' + formatWait(nextDue() - Date.now()) + '. Resumes by itself.';
+  document.getElementById('cs-sub').textContent = line();
   show('s-complete');
+  waitTimer = setInterval(() => {
+    if (Date.now() >= nextDue()) {
+      show('s-session');   // also stops this timer
+      showNext();
+    } else {
+      document.getElementById('cs-sub').textContent = line();
+    }
+  }, 1000);
+}
+function stopWait() {
+  if (waitTimer !== null) {
+    clearInterval(waitTimer);
+    waitTimer = null;
+  }
+}
+// "9:41" under an hour, "1h 05m" from there on.
+function formatWait(ms) {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  const h   = Math.floor(sec / 3600);
+  const m   = Math.floor((sec % 3600) / 60);
+  const pad = n => String(n).padStart(2, '0');
+  return h ? h + 'h ' + pad(m) + 'm' : m + ':' + pad(sec % 60);
 }
 
 function rate(rating) {
@@ -3430,7 +3459,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.22.1';
+const APP_VERSION = '2026.11.22.2';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

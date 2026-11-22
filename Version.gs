@@ -1,5 +1,5 @@
 // Written by tools/bump-version.mjs (pre-commit); do not edit.
 // The app compares APP_VERSION with the one in index.html to learn that a newer
 // deployment is live. The hash covers the deployed files at this version.
-const APP_VERSION = '2026.11.22.1';
-const APP_VERSION_HASH = 'f0d14a8737548773';
+const APP_VERSION = '2026.11.22.2';
+const APP_VERSION_HASH = '950159685844d2d6';
