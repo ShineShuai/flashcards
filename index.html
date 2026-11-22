@@ -1474,6 +1474,8 @@ let sessionStats = { total: 0, again: 0, good: 0 };
 let done         = 0;   // cards finished this session (re-queued cards count once)
 let sessionTotal = 0;   // cards at session start
 let waitTimer    = null;   // done screen: interval counting down to the next waiting card
+let audioCtx     = null;   // resume beep; created inside a rating (a user gesture)
+const BASE_TITLE = document.title;
 // A sub-day card (Again / lapse, 10 min step) is queued this many other cards ahead;
 // longer steps (Hard, 1 h) go to the end of the session. Either way it is offered only
 // once its due time has come (card._wait, see isReady).
@@ -2287,10 +2289,12 @@ function finishSession() {
                      ' in ' + formatWait(nextDue() - Date.now()) + '. Resumes by itself.';
   document.getElementById('cs-sub').textContent = line();
   show('s-complete');
+  primeAudio();   // still inside the rating that ended the session
   waitTimer = setInterval(() => {
     if (Date.now() >= nextDue()) {
       show('s-session');   // also stops this timer
       showNext();
+      notifyResume();
     } else {
       document.getElementById('cs-sub').textContent = line();
     }
@@ -2300,6 +2304,52 @@ function stopWait() {
   if (waitTimer !== null) {
     clearInterval(waitTimer);
     waitTimer = null;
+  }
+}
+// The session resumed on its own: a two-tone beep, and a marked tab title when the
+// tab is in the background (restored when it becomes visible, see below).
+function notifyResume() {
+  beep();
+  if (document.hidden) {
+    document.title = '● Card due · ' + BASE_TITLE;
+  }
+}
+// Browsers keep an AudioContext silent until a user gesture has created or resumed it.
+function primeAudio() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) {
+      return;
+    }
+    audioCtx = audioCtx || new Ctx();
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+  } catch (err) {
+    audioCtx = null;
+  }
+}
+function beep() {
+  if (!audioCtx) {
+    return;
+  }
+  try {
+    const t0 = audioCtx.currentTime;
+    [660, 880].forEach((freq, i) => {
+      const start = t0 + i * 0.16;
+      const osc   = audioCtx.createOscillator();
+      const gain  = audioCtx.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.2, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.14);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(start);
+      osc.stop(start + 0.15);
+    });
+  } catch (err) {
+    // a failed beep must never break the session
   }
 }
 // "9:41" under an hour, "1h 05m" from there on.
@@ -3459,7 +3509,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.22.2';
+const APP_VERSION = '2026.11.22.3';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
@@ -3542,6 +3592,11 @@ function navigateTop(url) {
 document.getElementById('app-version').textContent = 'v' + APP_VERSION;
 setInspector(storageGet(INSPECT_KEY) === '1');
 document.addEventListener('visibilitychange', maybeCheckVersion);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    document.title = BASE_TITLE;
+  }
+});
 setInterval(maybeCheckVersion, VERSION_CHECK_EVERY_MS);
 initTheme();
 saveQueue = loadPendingSaves();   // ratings not confirmed before the last close

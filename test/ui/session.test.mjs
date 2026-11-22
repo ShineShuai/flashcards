@@ -167,6 +167,85 @@ const past = () => new Date(Date.now() - 1000).toISOString();
   console.log('ok   lapse from Review returns without waiting');
 }
 
+// ── resume notification: beep and tab title
+{
+  const env = boot({ cards: [card('1'), card('2')] });
+  const { w } = env;
+  const log = { created: 0, resumed: 0, osc: [] };
+  w.AudioContext = class {
+    constructor() {
+      log.created++;
+      this.state = 'suspended';
+      this.currentTime = 0;
+      this.destination = {};
+    }
+    resume() {
+      log.resumed++;
+      this.state = 'running';
+    }
+    createGain() {
+      const param = { setValueAtTime() {}, exponentialRampToValueAtTime() {} };
+      return { gain: param, connect() {} };
+    }
+    createOscillator() {
+      const osc = { frequency: { value: 0 }, connect() {}, start() {}, stop() {} };
+      log.osc.push(osc);
+      return osc;
+    }
+  };
+  await env.start();
+  const { txt, shown } = env;
+  const base = w.document.title;
+  assert.equal(log.created, 0, 'no audio before a session ends');
+  w.flipCard();
+  w.rate(1);                                   // c1 Again: 10 min
+  await sleep(5);
+  w.flipCard();
+  w.rate(3);                                   // c2 Good on a new card: 1 h
+  await sleep(5);
+  assert.ok(shown('s-complete'));
+  assert.equal(log.created, 1, 'the context is created inside the rating');
+  assert.equal(log.resumed, 1);
+  assert.equal(log.osc.length, 0, 'no beep while counting down');
+
+  // 10 min pass while the tab is in the background
+  Object.defineProperty(w.document, 'hidden', { configurable: true, value: true });
+  w.eval(`deck[2].due = ${JSON.stringify(past())}`);
+  await until(() => shown('s-session'), 3000);
+  assert.equal(txt('card-title'), 'T1');
+  assert.equal(log.osc.map((o) => o.frequency.value).join(), '660,880', 'two-tone beep');
+  assert.equal(w.document.title, '● Card due · ' + base);
+  Object.defineProperty(w.document, 'hidden', { configurable: true, value: false });
+  w.document.dispatchEvent(new w.Event('visibilitychange'));
+  assert.equal(w.document.title, base, 'title restored when the tab is visible');
+  console.log('ok   resume: two-tone beep, background title marked and restored');
+}
+{
+  // visible tab: beep, title untouched; a context that throws never breaks the session
+  const env = boot({ cards: [card('1'), card('2')] });
+  const { w } = env;
+  w.AudioContext = class {
+    constructor() {
+      throw new Error('no audio');
+    }
+  };
+  await env.start();
+  const { txt, shown } = env;
+  const base = w.document.title;
+  w.flipCard();
+  w.rate(1);
+  await sleep(5);
+  w.flipCard();
+  w.rate(3);
+  await sleep(5);
+  assert.ok(shown('s-complete'));
+  w.eval(`deck[2].due = ${JSON.stringify(past())}`);
+  await until(() => shown('s-session'), 3000);
+  assert.equal(txt('card-title'), 'T1');
+  assert.equal(w.document.title, base, 'visible tab: title unchanged');
+  console.log('ok   resume: visible tab keeps its title; broken audio is harmless');
+}
+
 // ── Recap preview follows the hints; repeated weak keyword raises the streak
 {
   const now = Date.now();
