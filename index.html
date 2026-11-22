@@ -767,8 +767,8 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 <div id="s-complete" class="screen hidden">
   <div class="panel" style="text-align:center">
     <div class="complete-icon">🎉</div>
-    <div class="complete-title">All done!</div>
-    <div class="complete-sub">Today's session is complete.</div>
+    <div class="complete-title" id="cs-title">All done!</div>
+    <div class="complete-sub" id="cs-sub">Today's session is complete.</div>
     <div class="complete-stats">
       <div class="cs-box">
         <div class="cs-num" id="cs-total">0</div>
@@ -1473,8 +1473,9 @@ let spellOpen    = false;
 let sessionStats = { total: 0, again: 0, good: 0 };
 let done         = 0;   // cards finished this session (re-queued cards count once)
 let sessionTotal = 0;   // cards at session start
-// A sub-day card (Again / lapse, 10 min step) returns after this many other
-// cards; longer steps (Hard, 1 h) return at the end of the session.
+// A sub-day card (Again / lapse, 10 min step) is queued this many other cards ahead;
+// longer steps (Hard, 1 h) go to the end of the session. Either way it is offered only
+// once its due time has come (card._wait, see isReady).
 const REQUEUE_GAP = 5;
 // The back face is re-rendered only after the flip-back animation has hidden it,
 // otherwise the next card's answer shows while the card rotates.
@@ -2182,22 +2183,21 @@ function unflipCard() {
 }
 
 function skipCard() {
-  if (deck.length - idx <= 1) {
-    return;   // nothing else pending to skip to
+  if (!hasOtherReady()) {
+    return;   // nothing else ready to skip to
   }
   deck[idx]._skipped = true;
+  delete deck[idx]._wait;   // it is showing, so it is ready
   const [card] = deck.splice(idx, 1);
   deck.push(card);
-  updateProgress();
-  updateSkipBadge();
-  loadCard(idx);
+  showNext();
 }
 function updateSkipBadge() {
   const total = deck.slice(idx).filter(c => c._skipped).length;
   const badge = document.getElementById('skip-count');
   badge.style.display = total > 0 ? 'inline-flex' : 'none';
   badge.textContent = total;
-  document.getElementById('btn-skip').disabled = deck.length - idx <= 1;
+  document.getElementById('btn-skip').disabled = !hasOtherReady();
 }
 function clearSuggestion() {
   document.querySelectorAll('.btn-rate').forEach(b => b.classList.remove('suggested'));
@@ -2214,8 +2214,9 @@ function applySuggestion() {
     `Suggested: ${labels[suggested]} — ${shownCount} of ${shuffledKw.length} keywords shown`;
 }
 
-// Sub-day cards come back in this session: 10 min step after REQUEUE_GAP other
-// cards, longer steps at the end. Returns true when the card was re-queued.
+// Sub-day cards come back in this session: 10 min step REQUEUE_GAP other cards ahead,
+// longer steps at the end, both marked _wait: not offered before card.due.
+// Returns true when the card was re-queued.
 function requeue(card) {
   const days = Number(card.scheduled_days);
   if (days >= 1) {
@@ -2225,8 +2226,60 @@ function requeue(card) {
   if (days <= LEARNING_STEPS[0]) {
     at = idx + 1 + Math.min(REQUEUE_GAP, deck.length - idx - 1);
   }
+  card._wait = true;
   deck.splice(at, 0, card);
   return true;
+}
+
+// Cards of the deck are ready unless they are a re-queued sub-day card before its due time.
+function isReady(card, now) {
+  return !card._wait || new Date(card.due) <= now;
+}
+// Index of the first ready card from `from` on, or -1 when only waiting cards are left.
+function nextReadyIndex(from) {
+  const now = new Date();
+  for (let i = from; i < deck.length; i++) {
+    if (isReady(deck[i], now)) {
+      return i;
+    }
+  }
+  return -1;
+}
+function hasOtherReady() {
+  return nextReadyIndex(idx + 1) >= 0;
+}
+// Shows the first ready card from idx on (waiting cards keep their place). With only
+// waiting cards left the session ends and says when the first one returns.
+function showNext() {
+  const at = nextReadyIndex(idx);
+  if (at < 0) {
+    finishSession();
+    return;
+  }
+  if (at > idx) {
+    deck.splice(idx, 0, ...deck.splice(at, 1));
+  }
+  updateProgress();
+  loadCard(idx);
+  updateSkipBadge();
+}
+function finishSession() {
+  const waiting = deck.slice(idx);
+  let title = 'All done!';
+  let sub   = "Today's session is complete.";
+  if (waiting.length) {
+    const ms = Math.min(...waiting.map(c => new Date(c.due).getTime())) - Date.now();
+    const n  = waiting.length;
+    title = 'Done for now';
+    sub   = 'Next: ' + n + (n === 1 ? ' card' : ' cards') + ' in ' +
+            formatInterval(Math.max(1, Math.ceil(ms / 60000)) / 1440) + '.';
+  }
+  document.getElementById('cs-title').textContent = title;
+  document.getElementById('cs-sub').textContent   = sub;
+  document.getElementById('cs-total').textContent = sessionStats.total;
+  document.getElementById('cs-again').textContent = sessionStats.again;
+  document.getElementById('cs-good').textContent  = sessionStats.good;
+  show('s-complete');
 }
 
 function rate(rating) {
@@ -2255,6 +2308,7 @@ function rate(rating) {
 
   Object.assign(card, fsrs);
   delete card._skipped;
+  delete card._wait;
   enqueueSave(card.id, fsrs, {
     rating:       rating,
     state_before: stateBefore,
@@ -2276,16 +2330,7 @@ function rate(rating) {
   showRateToast(rating, fsrs, record, without);
   updateUndoState();
   idx++;
-  if (idx >= deck.length) {
-    document.getElementById('cs-total').textContent = sessionStats.total;
-    document.getElementById('cs-again').textContent = sessionStats.again;
-    document.getElementById('cs-good').textContent  = sessionStats.good;
-    show('s-complete');
-  } else {
-    updateProgress();
-    loadCard(idx);
-    updateSkipBadge();
-  }
+  showNext();
 }
 
 // ── Undo ───────────────────────────────────────────────────────────────────
@@ -2305,6 +2350,7 @@ function undoRating() {
   lastRating = null;
   Object.assign(u.card, u.prev);
   delete u.card._skipped;
+  delete u.card._wait;
   sessionStats.total--;
   if (u.rating === 1) {
     sessionStats.again--;
@@ -3384,7 +3430,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.19.4';
+const APP_VERSION = '2026.11.22.1';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
