@@ -366,8 +366,8 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 }
 .card-scene { width: 100%; max-width: 860px; perspective: 1200px; margin-bottom: 14px; }
 .card-3d {
-  width: 100%; min-height: clamp(420px, 62vh, 780px);
-  min-height: clamp(420px, 62dvh, 780px);
+  width: 100%; min-height: clamp(420px, calc(100vh - 176px), 780px);
+  min-height: clamp(420px, calc(100dvh - 176px), 780px);
   position: relative; transform-style: preserve-3d;
   transition: transform .55s cubic-bezier(.4,0,.2,1);
 }
@@ -378,8 +378,8 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 24px 22px; overflow-y: auto;
-  min-height: clamp(420px, 62vh, 780px);
-  min-height: clamp(420px, 62dvh, 780px);
+  min-height: clamp(420px, calc(100vh - 176px), 780px);
+  min-height: clamp(420px, calc(100dvh - 176px), 780px);
   display: flex; flex-direction: column; transition: background .3s;
 }
 .card-face-back { transform: rotateY(180deg); }
@@ -487,6 +487,13 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .fc-tab[aria-selected="true"] { color: var(--purple-t); background: var(--surface); border-color: var(--purple); }
 .fc-tab:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 .fc-tabpanel[hidden] { display: none; }
+/* more answer below: fade its bottom edge (class set by updateScrollHint) */
+.back-content.more {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent);
+}
+.back-content.zoomable img, .back-content.zoomable svg { cursor: zoom-in; }
+.back-content.zoomable a img { cursor: pointer; }
 .back-content h1,.back-content h2,.back-content h3
   { margin: .7em 0 .3em; color:var(--text); font-weight:900; }
 .back-content h1 { font-size:1.3em; }
@@ -583,6 +590,39 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   .recall-strip > *, .rs-chip { flex: none; white-space: nowrap; }
   .rs-trail { flex-wrap: nowrap; }
 }
+/* ── Picture viewer ── */
+body.viewer-open { overflow: hidden; }
+#viewer {
+  position: fixed; inset: 0; z-index: 600; display: flex; flex-direction: column;
+  background: rgba(8,8,20,.95); color: #fff; outline: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+           env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+.viewer-bar {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px;
+}
+.viewer-count { font-size: .8rem; font-weight: 700; opacity: .85; min-width: 3.5em; }
+.viewer-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+.viewer-btn {
+  min-width: 44px; min-height: 44px; padding: 0 12px; font: inherit; font-size: .9rem;
+  font-weight: 700; color: #fff; background: rgba(255,255,255,.14);
+  border: 1px solid rgba(255,255,255,.3); border-radius: 12px; cursor: pointer;
+}
+.viewer-btn:hover:not(:disabled) { background: rgba(255,255,255,.26); }
+.viewer-btn:disabled { opacity: .4; cursor: default; }
+.viewer-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.viewer-btn[hidden] { display: none; }
+.viewer-stage {
+  flex: 1; min-height: 0; display: flex; overflow: auto; touch-action: none;
+  overscroll-behavior: contain; user-select: none; -webkit-user-select: none;
+}
+.viewer-canvas { margin: auto; flex: none; }
+.viewer-pic {
+  display: block; width: 100%; height: 100%; max-width: none; pointer-events: none;
+  -webkit-user-drag: none;
+}
+.viewer-caption { flex: none; text-align: center; font-size: .82rem; padding: 6px 12px 10px; opacity: .85; }
+.viewer-caption:empty { display: none; }
 #docs-modal {
   position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column;
   background: var(--bg);
@@ -907,6 +947,31 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
       aria-label="Close documentation">✕</button>
   </div>
   <div id="docs-content"><div class="docs-loading" id="docs-loading">Loading…</div></div>
+</div>
+
+<div id="viewer" class="hidden" role="dialog" aria-modal="true" aria-label="Picture viewer" tabindex="-1">
+  <div class="viewer-bar">
+    <span class="viewer-count" id="viewer-count" aria-live="polite"></span>
+    <span class="viewer-tools">
+      <button class="viewer-btn" id="viewer-prev" onclick="viewerStep(-1)"
+        aria-label="Previous picture">‹</button>
+      <button class="viewer-btn" id="viewer-next" onclick="viewerStep(1)"
+        aria-label="Next picture">›</button>
+      <button class="viewer-btn" id="viewer-out" onclick="viewerZoomBy(1 / VIEWER_STEP)"
+        aria-label="Zoom out">−</button>
+      <button class="viewer-btn" id="viewer-in" onclick="viewerZoomBy(VIEWER_STEP)"
+        aria-label="Zoom in">+</button>
+      <button class="viewer-btn" id="viewer-fit" onclick="viewerZoomTo(1)">Fit</button>
+      <button class="viewer-btn" id="viewer-width"
+        onclick="viewerZoomTo(viewerWidthZoom(viewer))">Width</button>
+      <button class="viewer-btn" id="viewer-actual"
+        onclick="viewerZoomTo(viewerActualZoom(viewer))">100%</button>
+      <button class="viewer-btn" id="viewer-close" onclick="viewerClose()"
+        aria-label="Close picture viewer">✕</button>
+    </span>
+  </div>
+  <div class="viewer-stage" id="viewer-stage"><div class="viewer-canvas" id="viewer-canvas"></div></div>
+  <div class="viewer-caption" id="viewer-caption"></div>
 </div>
 
 <div class="save-status" id="save-status" role="status" aria-live="polite"></div>
@@ -1856,8 +1921,11 @@ function renderBack(card) {
   const content = String(card.back_content || '');
   const badge = document.getElementById('back-type-badge');
   const stage = document.getElementById('back-content');
+  viewerClose();
   badge.textContent = type;
   mountBack(stage, content, type);
+  wireViewer(stage);
+  watchScrollHint(stage);
   const tabbed = stage.firstElementChild && stage.firstElementChild.fcTabs;
   if (tabbed) {
     badge.textContent = type + ' · ' + tabbed.tabs.length + ' tabs';
@@ -2694,6 +2762,9 @@ function sessionKey(key, mod, onButton) {
     if (key === 'ArrowLeft' || key === 'ArrowRight') {
       return tabsStep(document.getElementById('back-content'), key === 'ArrowRight' ? 1 : -1);
     }
+    if (key === 'v') {
+      return viewerOpenFirst();
+    }
     return false;
   }
   if ((key === ' ' || key === 'Enter') && !onButton) {
@@ -2735,6 +2806,10 @@ function onKeyDown(e) {
     }
     return;
   }
+  if (isShown('viewer')) {                       // modal: no rating, flip or tab keys behind it
+    viewerKey(e, key);
+    return;
+  }
   const mod = e.ctrlKey || e.metaKey;
   // Space/Enter on a focused button keep their native meaning (click)
   const onButton = !!(el.closest && el.closest('button, a'));
@@ -2769,6 +2844,430 @@ document.addEventListener('click', e => {
     button.blur();
   }
 });
+
+// ── Scroll fade ────────────────────────────────────────────────────────────
+// The answer scrolls inside the card; a fade at its bottom edge shows that there is more.
+function updateScrollHint() {
+  const el = document.getElementById('back-content');
+  el.classList.toggle('more', el.scrollHeight - el.scrollTop - el.clientHeight > 2);
+}
+let scrollHintWired = false;
+let scrollHintObserver = null;
+function watchScrollHint(stage) {
+  if (!scrollHintWired) {
+    scrollHintWired = true;
+    stage.addEventListener('scroll', updateScrollHint, { passive: true });
+    stage.addEventListener('load', updateScrollHint, true);           // a picture arrived
+    window.addEventListener('resize', updateScrollHint);
+    if (typeof ResizeObserver === 'function') {
+      scrollHintObserver = new ResizeObserver(updateScrollHint);
+    }
+  }
+  if (scrollHintObserver) {                                  // the card, or a tab, changed height
+    scrollHintObserver.disconnect();
+    scrollHintObserver.observe(stage);
+    Array.from(stage.children).forEach(child => scrollHintObserver.observe(child));
+  }
+  updateScrollHint();
+}
+
+// ── Picture viewer ─────────────────────────────────────────────────────────
+// A tap (or V) on a picture or inline SVG of the answer shows it full screen: fitted to the
+// screen, zoomed by buttons, keys, Ctrl+wheel, pinch or double tap, panned by dragging.
+// Left/right move between the pictures of the tab. The viewer shows a copy: an SVG that a
+// <style> block of its card styles from outside the SVG loses that styling here.
+const VIEWER_STEP = 1.25;
+const VIEWER_ICON_PX = 48;           // smaller pictures are icons: not offered
+const VIEWER_MAX_PX = 16000;         // longest side of the zoomed picture
+const VIEWER_RASTER_FIT_CAP = 4;     // a small bitmap is enlarged to fit at most this much
+const VIEWER_TAP_MS = 400;
+const VIEWER_DOUBLE_TAP_MS = 300;
+const VIEWER_SLOP_PX = 8;
+const VIEWER_GHOST_CLICK_MS = 500;   // a tap that closes is followed by a click on what lies below
+// zoom 1 is "fit the screen"; w x h is the picture, fit the scale that fits it
+const viewer = { items: [], i: 0, pic: null, w: 1, h: 1, raster: false, fit: 1, zoom: 1,
+  sw: 1, sh: 1, back: null, inerted: [], closedAt: 0 };
+
+function viewerFitScale(sw, sh, w, h, cap) {
+  if (!(sw > 0 && sh > 0 && w > 0 && h > 0)) {
+    return 1;
+  }
+  return Math.min(sw / w, sh / h, cap);
+}
+function viewerActualZoom(v) {                      // one picture pixel per CSS pixel
+  return v.raster ? 1 / v.fit : 1;
+}
+function viewerWidthZoom(v) {                       // the picture as wide as the screen
+  return v.sw / (v.w * v.fit);
+}
+function viewerMaxZoom(v) {
+  const byPixels = VIEWER_MAX_PX / (Math.max(v.w, v.h) * v.fit);
+  return Math.max(1, Math.min(Math.max(8, 2 * viewerActualZoom(v)), byPixels));
+}
+function viewerClampZoom(z, v) {
+  return Math.min(Math.max(z, 1), viewerMaxZoom(v));
+}
+function viewerSize(v) {
+  const k = v.fit * v.zoom;
+  return [Math.round(v.w * k), Math.round(v.h * k)];
+}
+
+const viewerEl = id => document.getElementById('viewer-' + id);
+
+// Is this picture offered? Loaded, not an icon.
+function viewerOffered(el) {
+  const r = el.getBoundingClientRect();
+  if (el.localName === 'img') {
+    return !!el.complete && el.naturalWidth > 0 &&
+      (Math.max(r.width, r.height) >= VIEWER_ICON_PX ||
+       Math.max(el.naturalWidth, el.naturalHeight) >= 2 * VIEWER_ICON_PX);
+  }
+  return Math.max(r.width, r.height) >= VIEWER_ICON_PX;
+}
+
+// The offered pictures of `scope`, in reading order: images and outermost SVGs, also those of
+// a styled card (in its shadow root); none inside a link or a button.
+function viewerCollect(scope) {
+  const out = [];
+  const add = root => root.querySelectorAll('img, svg, .fc-styled').forEach(node => {
+    if (node.classList.contains('fc-styled')) {
+      if (node.shadowRoot) {
+        add(node.shadowRoot);
+      }
+    } else if (!node.closest('a[href], button') &&
+               !(node.localName === 'svg' && node.parentElement && node.parentElement.closest('svg')) &&
+               viewerOffered(node)) {
+      out.push(node);
+    }
+  });
+  add(scope);
+  return out;
+}
+// The visible tab of the answer, or the whole answer.
+function viewerScope() {
+  const stage = document.getElementById('back-content');
+  const root = stage.firstElementChild;
+  return root && root.fcTabs ? root.fcTabs.panels[root.fcTabs.current] : stage;
+}
+// The picture a click landed on, or null (an icon, not a picture). viewerOpen refuses one inside
+// a link or a button: it is not among viewerCollect's.
+function viewerTarget(e) {
+  let found = null;
+  for (const node of e.composedPath()) {
+    if (node === e.currentTarget) {
+      break;
+    }
+    if (node.localName === 'img') {
+      found = node;
+      break;
+    }
+    if (node.localName === 'svg') {
+      found = node;                                  // keep going: the outermost SVG wins
+    }
+  }
+  return found && viewerOffered(found) ? found : null;
+}
+let viewerWired = false;
+function wireViewer(stage) {
+  stage.classList.add('zoomable');
+  if (viewerWired) {
+    return;
+  }
+  viewerWired = true;
+  stage.addEventListener('click', e => {
+    const el = Date.now() - viewer.closedAt < VIEWER_GHOST_CLICK_MS ? null : viewerTarget(e);
+    if (el) {
+      viewerOpen(el);
+    }
+  });
+  viewerWirePointer();
+  window.addEventListener('resize', () => {
+    if (isShown('viewer')) {
+      viewerLayout();
+    }
+  });
+}
+
+function viewerOpenFirst() {
+  const items = viewerCollect(viewerScope());
+  return items.length > 0 && viewerOpen(items[0], items);
+}
+function viewerOpen(el, items) {
+  items = items || viewerCollect(viewerScope());
+  const at = items.indexOf(el);
+  if (at < 0) {
+    return false;
+  }
+  viewer.items = items;
+  viewer.back = document.activeElement;
+  viewer.inerted = Array.from(document.querySelectorAll('.top-bar, .screen'))
+    .filter(node => !node.hasAttribute('inert'));
+  viewer.inerted.forEach(node => node.setAttribute('inert', ''));
+  document.body.classList.add('viewer-open');
+  document.getElementById('viewer').classList.remove('hidden');
+  viewerShow(at);
+  document.getElementById('viewer').focus();
+  return true;
+}
+function viewerClose() {
+  const box = document.getElementById('viewer');
+  if (box.classList.contains('hidden')) {
+    return;
+  }
+  box.classList.add('hidden');
+  viewer.closedAt = Date.now();
+  document.body.classList.remove('viewer-open');
+  viewer.inerted.forEach(node => node.removeAttribute('inert'));
+  viewer.inerted = [];
+  viewerEl('canvas').textContent = '';
+  viewer.pic = null;
+  viewer.items = [];
+  const back = viewer.back;
+  viewer.back = null;
+  if (back && back.isConnected && back.focus) {
+    back.focus();
+  }
+}
+
+// The size of an SVG in its own units: viewBox, else numeric width/height, else as shown.
+function viewerSvgSize(svg) {
+  const box = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+  if (box.length === 4 && box[2] > 0 && box[3] > 0) {
+    return [box[2], box[3], false];
+  }
+  const w = parseFloat(svg.getAttribute('width'));
+  const h = parseFloat(svg.getAttribute('height'));
+  if (w > 0 && h > 0) {
+    return [w, h, true];
+  }
+  const r = svg.getBoundingClientRect();
+  return [r.width || 300, r.height || 150, true];
+}
+function viewerShow(i) {
+  const el = viewer.items[i];
+  const canvas = viewerEl('canvas');
+  viewer.i = i;
+  canvas.textContent = '';
+  let pic;
+  if (el.localName === 'img') {
+    pic = new Image();
+    pic.src = el.currentSrc || el.src;
+    pic.alt = el.alt || '';
+    viewer.w = el.naturalWidth;
+    viewer.h = el.naturalHeight;
+    viewer.raster = true;
+  } else {
+    pic = el.cloneNode(true);
+    const [w, h, needsBox] = viewerSvgSize(el);
+    if (needsBox) {
+      pic.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    }
+    pic.removeAttribute('width');
+    pic.removeAttribute('height');
+    pic.removeAttribute('style');
+    viewer.w = w;
+    viewer.h = h;
+    viewer.raster = false;
+  }
+  pic.classList.add('viewer-pic');
+  pic.setAttribute('draggable', 'false');
+  canvas.appendChild(pic);
+  viewer.pic = pic;
+  viewer.zoom = 1;
+  viewerEl('count').textContent = viewer.items.length > 1 ? (i + 1) + ' / ' + viewer.items.length : '';
+  viewerEl('caption').textContent = el.getAttribute('alt') || el.getAttribute('aria-label') ||
+    (el.querySelector && el.querySelector('title') ? el.querySelector('title').textContent : '');
+  const stage = viewerEl('stage');
+  stage.scrollLeft = 0;
+  stage.scrollTop = 0;
+  viewerLayout();
+}
+function viewerLayout() {
+  if (!viewer.pic) {
+    return;
+  }
+  const stage = viewerEl('stage');
+  viewer.sw = stage.clientWidth;
+  viewer.sh = stage.clientHeight;
+  viewer.fit = viewerFitScale(viewer.sw, viewer.sh, viewer.w, viewer.h,
+    viewer.raster ? VIEWER_RASTER_FIT_CAP : Infinity);
+  viewer.zoom = viewerClampZoom(viewer.zoom, viewer);
+  const [cw, ch] = viewerSize(viewer);
+  const canvas = viewerEl('canvas');
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+  const max = viewerMaxZoom(viewer);
+  const differs = z => z > 1.05 && z <= max * 1.001;
+  viewerEl('prev').hidden = viewerEl('next').hidden = viewer.items.length < 2;
+  viewerEl('prev').disabled = viewer.i === 0;
+  viewerEl('next').disabled = viewer.i === viewer.items.length - 1;
+  viewerEl('out').disabled = viewer.zoom <= 1.001;
+  viewerEl('in').disabled = viewer.zoom >= max * 0.999;
+  viewerEl('fit').disabled = viewer.zoom <= 1.001;
+  viewerEl('width').hidden = !differs(viewerWidthZoom(viewer));
+  viewerEl('actual').hidden = !viewer.raster || !differs(viewerActualZoom(viewer));
+}
+// Zooms to z (kept between fit and the maximum), the point at client (cx, cy) staying put;
+// by default the middle of the screen.
+function viewerZoomTo(z, cx, cy) {
+  const stage = viewerEl('stage');
+  const canvas = viewerEl('canvas');
+  const box = stage.getBoundingClientRect();
+  cx = cx === undefined ? box.left + box.width / 2 : cx;
+  cy = cy === undefined ? box.top + box.height / 2 : cy;
+  const was = canvas.getBoundingClientRect();
+  const fx = was.width ? (cx - was.left) / was.width : 0.5;
+  const fy = was.height ? (cy - was.top) / was.height : 0.5;
+  viewer.zoom = z;
+  viewerLayout();
+  const now = canvas.getBoundingClientRect();
+  stage.scrollLeft += now.left + fx * now.width - cx;
+  stage.scrollTop += now.top + fy * now.height - cy;
+}
+function viewerZoomBy(factor, cx, cy) {
+  viewerZoomTo(viewer.zoom * factor, cx, cy);
+}
+function viewerStep(by) {
+  const to = viewer.i + by;
+  if (to >= 0 && to < viewer.items.length) {
+    viewerShow(to);
+  }
+}
+// Double tap: back to fit when zoomed, else in (to actual size, at least 2x).
+function viewerToggle(cx, cy) {
+  viewerZoomTo(viewer.zoom > 1.05 ? 1
+    : Math.min(viewerMaxZoom(viewer), Math.max(2, viewerActualZoom(viewer))), cx, cy);
+}
+
+function viewerKey(e, key) {
+  if (e.ctrlKey || e.metaKey) {
+    return;
+  }
+  let handled = true;
+  if (key === 'Escape') {
+    viewerClose();
+  } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+    viewerStep(key === 'ArrowRight' ? 1 : -1);
+  } else if (key === '+' || key === '=') {
+    viewerZoomBy(VIEWER_STEP);
+  } else if (key === '-') {
+    viewerZoomBy(1 / VIEWER_STEP);
+  } else if (key === '0' || key === 'f') {
+    viewerZoomTo(1);
+  } else if (key === 'w') {
+    viewerZoomTo(viewerWidthZoom(viewer));
+  } else if (key === '1') {
+    viewerZoomTo(viewerActualZoom(viewer));
+  } else {
+    handled = false;
+  }
+  if (handled) {
+    e.preventDefault();
+  }
+}
+
+// Pointers: one finger or the mouse pans, two fingers pinch, a tap outside the picture
+// closes, a double tap toggles the zoom, Ctrl+wheel (and a trackpad pinch) zooms.
+function viewerWirePointer() {
+  const box = document.getElementById('viewer');
+  const stage = viewerEl('stage');
+  const pointers = new Map();
+  let pinch = null;
+  let lastTap = null;
+  box.addEventListener('keydown', e => {                  // keep Tab inside the viewer
+    if (e.key !== 'Tab') {
+      return;
+    }
+    const tools = Array.from(box.querySelectorAll('button:not([hidden]):not(:disabled)'));
+    const first = tools[0];
+    const last = tools[tools.length - 1];
+    if (first && e.shiftKey && (document.activeElement === first || document.activeElement === box)) {
+      e.preventDefault();
+      last.focus();
+    } else if (last && !e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  });
+  stage.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) {
+      return;
+    }
+    if (stage.setPointerCapture) {
+      try {
+        stage.setPointerCapture(e.pointerId);
+      } catch (err) {
+        // a synthetic or finished pointer: panning still works without capture
+      }
+    }
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY,
+      t0: Date.now(), moved: false });
+    if (pointers.size === 2) {
+      const [a, b] = Array.from(pointers.values());
+      a.moved = b.moved = true;                              // not a tap any more
+      pinch = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, z0: viewer.zoom,
+        mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    }
+  });
+  stage.addEventListener('pointermove', e => {
+    const p = pointers.get(e.pointerId);
+    if (!p) {
+      return;
+    }
+    const dx = e.clientX - p.x;
+    const dy = e.clientY - p.y;
+    p.x = e.clientX;
+    p.y = e.clientY;
+    if (Math.hypot(p.x - p.x0, p.y - p.y0) > VIEWER_SLOP_PX) {
+      p.moved = true;
+    }
+    if (pinch && pointers.size === 2) {
+      const [a, b] = Array.from(pointers.values());
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      stage.scrollLeft -= mx - pinch.mx;                       // the fingers' middle also pans
+      stage.scrollTop -= my - pinch.my;
+      pinch.mx = mx;
+      pinch.my = my;
+      viewerZoomTo(pinch.z0 * (Math.hypot(a.x - b.x, a.y - b.y) / pinch.d0), mx, my);
+    } else if (pointers.size === 1 && p.moved) {
+      stage.scrollLeft -= dx;
+      stage.scrollTop -= dy;
+    }
+  });
+  const end = (e, cancelled) => {
+    const p = pointers.get(e.pointerId);
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) {
+      pinch = null;
+    }
+    if (!p || cancelled || p.moved || pointers.size > 0 || Date.now() - p.t0 > VIEWER_TAP_MS) {
+      return;
+    }
+    const now = Date.now();
+    if (lastTap && now - lastTap.t < VIEWER_DOUBLE_TAP_MS &&
+        Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+      lastTap = null;
+      viewerToggle(e.clientX, e.clientY);
+      return;
+    }
+    lastTap = { t: now, x: e.clientX, y: e.clientY };
+    const r = viewer.pic.getBoundingClientRect();
+    const onPicture = e.clientX >= r.left && e.clientX <= r.right &&
+      e.clientY >= r.top && e.clientY <= r.bottom;
+    if (!onPicture) {
+      viewerClose();
+    }
+  };
+  stage.addEventListener('pointerup', e => end(e, false));
+  stage.addEventListener('pointercancel', e => end(e, true));
+  stage.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      viewerZoomBy(Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+    }
+  }, { passive: false });
+}
 
 // ── Spell check ────────────────────────────────────────────────────────────
 // @spell-begin
@@ -3719,7 +4218,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.23.1';
+const APP_VERSION = '2026.11.23.3';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
