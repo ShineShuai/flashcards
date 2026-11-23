@@ -34,4 +34,6 @@ fi
 if node -e "require.resolve('playwright')" 2>/dev/null; then
   echo "== layout"
   node test/layout.mjs
+  echo "== viewer"
+  node test/viewer.mjs
 fi

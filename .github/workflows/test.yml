@@ -57,7 +57,7 @@ jobs:
             node "$f"
           done
 
-  # Real Chromium: five rating buttons in one row, tap targets, no scrolling
+  # Real Chromium: five rating buttons in one row, tap targets, no scrolling; the picture viewer
   layout:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -69,6 +69,7 @@ jobs:
       - run: npm install --no-save --no-package-lock playwright@1.63.0
       - run: npx playwright install --with-deps chromium
       - run: node test/layout.mjs
+      - run: node test/viewer.mjs
 
   # The pinned marked and DOMPurify <script> integrity hashes vs their npm packages (needs network)
   integrity:
