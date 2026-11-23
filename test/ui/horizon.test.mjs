@@ -1,7 +1,7 @@
 // Run: node test/ui/horizon.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
 // Weights screen, "Horizon guard: cards already scheduled": check, pull forward, undo.
 import assert from 'node:assert/strict';
-import { boot, card, sleep, until } from './harness.mjs';
+import { boot, card, NOW, sleep, until } from './harness.mjs';
 
 const plain = (x) => JSON.parse(JSON.stringify(x));
 let failed = 0;
@@ -17,7 +17,7 @@ async function test(name, fn) {
 
 // A Review card last seen `daysAgo` days ago, scheduled `days` days, failed at 77 d with cap 65.45.
 const lastSeen = (daysAgo) => {
-  const d = new Date();
+  const d = new Date(NOW);
   d.setDate(d.getDate() - daysAgo);
   d.setHours(10, 0, 0, 0);
   return d;
@@ -53,7 +53,7 @@ await test('check lists cards scheduled past the cap, soonest first; nothing is 
   assert.match(env.txt('hz-result'), /^2 cards are scheduled past the cap/);
   const found = rows(env);
   assert.equal(found.length, 2);
-  const pull = (c) => env.w.horizonPull(c, new Date());
+  const pull = (c) => env.w.horizonPull(c, new Date(NOW));
   const a = pull(sched('a', 20, 134));
   const b = pull(sched('b', 40, 200));
   assert.ok(b.due < a.due, 'b (cap day earlier) comes first');
@@ -76,7 +76,7 @@ await test('pull forward sends the changes with the read version; undo sends the
   const [sent] = plain(env.srv.horizonCalls);
   assert.equal(sent.length, 3);
   const a = sent.find((c) => c.id === 'a');
-  const pull = env.w.horizonPull(cards[0], new Date());
+  const pull = env.w.horizonPull(cards[0], new Date(NOW));
   assert.deepEqual(a, { id: 'a', last_review: cards[0].last_review, due: pull.due,
     scheduled_days: 65, stability: pull.stability });
   assert.equal(env.txt('hz-result'), 'Pulled forward 2 cards. Skipped: 1 reviewed since.');

@@ -1,7 +1,7 @@
 // Run: node test/ui/home.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
 // Home: forecast bars, reviewed today and streak. Session: the card-details panel.
 import assert from 'node:assert/strict';
-import { boot, card, sleep, until } from './harness.mjs';
+import { boot, card, daysAgo, NOW, sleep, until } from './harness.mjs';
 
 let failed = 0;
 async function test(name, fn) {
@@ -85,7 +85,7 @@ await test('forecast: hidden without data or with an empty list; all zeros are f
 
 await test('the server is told the client UTC offset for both calls', async () => {
   const env = await home({ forecast: FORECAST, activity: { today: 1, days: {} } });
-  const offset = -new Date().getTimezoneOffset() || 0;        // not -0 at UTC
+  const offset = -new Date(NOW).getTimezoneOffset() || 0;     // the page's moment; not -0 at UTC
   assert.deepEqual(plain(env.srv.bootstrapArgs[0]), [offset]);
   assert.deepEqual(plain(env.srv.activityArgs[0]), [offset]);
 });
@@ -135,8 +135,8 @@ await test('Home asks again after a review session: activity refreshes', async (
 const DAY = 86400000;
 const SEEN = card('rev', 'foo;bar;baz', {
   state: 2, stability: 12.5, difficulty: 6.2, reps: 5, lapses: 1, scheduled_days: 10,
-  last_review: new Date(Date.now() - 3 * DAY).toISOString(),
-  due: new Date(Date.now() - DAY).toISOString(), weak_keywords: 'foo;bar', miss_streak: 2,
+  last_review: daysAgo(3).toISOString(),
+  due: daysAgo(1).toISOString(), weak_keywords: 'foo;bar', miss_streak: 2,
 });
 const rows = (env) => Object.fromEntries(Array.from(
   env.w.document.querySelectorAll('#inspector-body .insp-row'),
@@ -221,7 +221,7 @@ await test('details: a new card and the next card update the panel', async () =>
 await test('details: the panel never shows card text as markup', async () => {
   const evil = card('x', 'k', { state: 2, stability: 5, difficulty: 5,
     weak_keywords: '<img src=x onerror=1>',
-    last_review: new Date(Date.now() - DAY).toISOString() });
+    last_review: daysAgo(1).toISOString() });
   const env = boot({ cards: [evil], storage: { 'fc-inspector': '1' } });
   await env.start();
   assert.equal(env.w.document.querySelector('#inspector img'), null);

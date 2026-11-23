@@ -1,7 +1,7 @@
 // Run: node test/ui/recall-screen.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
 // Recall screen: every card, most urgent first, filters, bar, paging, errors.
 import assert from 'node:assert/strict';
-import { boot, card, sleep, until } from './harness.mjs';
+import { boot, card, NOW, sleep, until } from './harness.mjs';
 
 const plain = (x) => JSON.parse(JSON.stringify(x));
 let failed = 0;
@@ -18,10 +18,10 @@ async function test(name, fn) {
 // The app counts days from ROLLOVER_HOUR (studyDay): before 04:00 it is still yesterday's
 // study day. A fixture `daysAgo` study days back is dated from the current study day, so
 // daysBetween(at(n), now) is n at any time of day (a plain "today minus n" at 10:00 was n - 1
-// between 00:00 and 04:00, and the tests failed then).
+// between 00:00 and 04:00, and the tests failed then). `base` is the moment taken as now.
 const ROLLOVER_HOUR = 4;
-const at = (daysAgo, hour = 10) => {
-  const d = new Date(Date.now() - ROLLOVER_HOUR * 3600000);
+const at = (daysAgo, hour = 10, base = NOW) => {
+  const d = new Date(base.getTime() - ROLLOVER_HOUR * 3600000);
   d.setDate(d.getDate() - daysAgo);
   d.setHours(hour, 0, 0, 0);
   return d.toISOString();
@@ -58,17 +58,14 @@ const filters = (env) => [...env.w.document.querySelectorAll('#rc-filters button
 await test('fixtures: at(n) is n study days back at any time of day (same rollover as the app)', async () => {
   const env = await open({ recallRows: [] });
   assert.equal(env.w.eval('ROLLOVER_HOUR'), ROLLOVER_HOUR);
-  const realNow = Date.now;
-  try {
+  // every hour of a day with a DST change behind it (Berlin: 25 Oct), and of an ordinary one
+  for (const day of [[2026, 10, 23], [2026, 9, 26], [2027, 2, 30]]) {
     for (let hour = 0; hour < 24; hour++) {
-      const now = new Date(2026, 10, 23, hour, 30);                 // local 23 Nov, hh:30
-      Date.now = () => now.getTime();
+      const now = new Date(day[0], day[1], day[2], hour, 30);
       for (const n of [0, 1, 40]) {
-        assert.equal(env.w.daysBetween(new Date(at(n)), now), n, `${hour}:30, ${n} days`);
+        assert.equal(env.w.daysBetween(new Date(at(n, 10, now)), now), n, `${day} ${hour}:30, ${n} days`);
       }
     }
-  } finally {
-    Date.now = realNow;
   }
   env.w.close();
 });
@@ -95,7 +92,7 @@ await test('a row shows the recall strip and a bar: recalled, horizon somewhere,
   assert.match(strip, /gap 4\d d · recall now \d+%/);
   assert.match(strip, /failed ✗ 30 d/);
   assert.match(strip, /best ✓ 10 d/);
-  const gap = env.w.daysBetween(new Date(ROWS[4].last_review), new Date());
+  const gap = env.w.daysBetween(new Date(ROWS[4].last_review), new Date(NOW));
   const top = Math.max(gap, 10, 30, 38, 1) * 1.1;
   const pct = (x) => (100 * x / top).toFixed(1) + '%';
   const seg = (kind) => row.querySelector('.rc-seg.' + kind);
