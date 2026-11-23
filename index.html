@@ -472,6 +472,21 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .back-content-text { white-space: pre-wrap; }
 .back-note { font-size: .75rem; color: var(--text2); margin-bottom: 8px; }
 .back-content img  { max-width:100%; border-radius:12px; margin:8px 0; display:block; }
+/* tabs: <!--tab--> lines in back_content (see splitTabs) */
+.fc-tabbar {
+  display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px;
+  position: sticky; top: 0; z-index: 1; background: var(--surface); scrollbar-width: thin;
+}
+.fc-tab {
+  flex: 0 0 auto; max-width: 14em; min-height: 36px; padding: 6px 14px;
+  font: inherit; font-size: .8rem; font-weight: 700; line-height: 1.2;
+  border-radius: 999px; border: 1px solid var(--border); cursor: pointer;
+  color: var(--text2); background: var(--bg2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.fc-tab[aria-selected="true"] { color: var(--purple-t); background: var(--surface); border-color: var(--purple); }
+.fc-tab:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.fc-tabpanel[hidden] { display: none; }
 .back-content h1,.back-content h2,.back-content h3
   { margin: .7em 0 .3em; color:var(--text); font-weight:900; }
 .back-content h1 { font-size:1.3em; }
@@ -1839,9 +1854,21 @@ function renderFront() {
 function renderBack(card) {
   const type    = String(card.back_type || 'text').toLowerCase().trim();
   const content = String(card.back_content || '');
-  document.getElementById('back-type-badge').textContent = type;
-  mountBack(document.getElementById('back-content'), content, type);
-  watchLiveFrames(document.getElementById('back-content'));
+  const badge = document.getElementById('back-type-badge');
+  const stage = document.getElementById('back-content');
+  badge.textContent = type;
+  mountBack(stage, content, type);
+  const tabbed = stage.firstElementChild && stage.firstElementChild.fcTabs;
+  if (tabbed) {
+    badge.textContent = type + ' · ' + tabbed.tabs.length + ' tabs';
+  } else {
+    watchLiveFrames(stage);
+  }
+}
+// Called for every tab when it is mounted (mountBack shares the sheet preview, which has
+// no such function): a live tab's frame gets the same watch as a live card.
+function onTabMounted(panel) {
+  watchLiveFrames(panel);
 }
 // A live card reports its content height; only the frame that sent it is resized.
 const LIVE_MIN_HEIGHT = 40;
@@ -1991,8 +2018,9 @@ function noteBrokenImages(root) {
     img.after(note);
   }, true);
 }
-// Puts a card into `el`. Everything but a styled card is plain renderHtml markup.
-function mountBack(el, content, type) {
+// Puts one tab (or a card without tabs) into `el`. Everything but a styled card is plain
+// renderHtml markup.
+function mountOne(el, content, type) {
   const markup = isStyledCard(content, type) && typeof el.attachShadow === 'function'
     ? styledMarkup(content) : '';
   if (!markup) {
@@ -2006,6 +2034,174 @@ function mountBack(el, content, type) {
   noteBrokenImages(shadow);
   shadow.innerHTML = markup;
   el.replaceChildren(host);
+}
+// One card, several tabs. A line that holds only an HTML comment "tab", "tab TYPE" or
+// "tab TYPE: Label" (also "tab: Label") starts the next tab. TYPE (text, md, html, svg,
+// live) replaces the card's back_type for that tab. The text before the first marker is
+// tab 1; blank tabs are dropped. Without a marker the card is one tab, as it always was.
+// A comment is invisible in html, svg and md, so an older client shows the tabs one after
+// the other. (No literal comment opener here: the sidebar page embeds this block in a
+// <script>, where it would start the escaped state; hence the escaped dashes.)
+const TAB_MARKER =
+  /^[ \t]*<!\-\-[ \t]*tab(?:[ \t]+(text|md|html|svg|live))?[ \t]*(?::[ \t]*([^\n]*?))?[ \t]*\-\->[ \t]*$/gim;
+const TAB_LABEL_MAX = 40;
+const SWIPE_MIN = 60;                         // px; a swipe is mostly horizontal
+function splitTabs(content, type) {
+  const tabs = [];
+  let from = 0;
+  let cur = { type, label: '' };
+  const push = end => {
+    let body = content.slice(from, end);
+    if (from > 0) {
+      body = body.replace(/^\r?\n/, '');
+    }
+    if (end < content.length) {
+      body = body.replace(/\r?\n$/, '');
+    }
+    if (body.trim()) {
+      tabs.push({ type: cur.type, label: cur.label, content: body });
+    }
+  };
+  for (const m of content.matchAll(TAB_MARKER)) {
+    push(m.index);
+    from = m.index + m[0].length;
+    cur = { type: (m[1] || type).toLowerCase(),
+            label: (m[2] || '').trim().slice(0, TAB_LABEL_MAX) };
+  }
+  push(content.length);
+  return tabs;
+}
+// A swipe that starts in something that scrolls sideways (a wide table, code) is its own.
+function scrollsSideways(node, stop) {
+  const win = stop.ownerDocument.defaultView;
+  for (let n = node; n && n !== stop; n = n.parentElement) {
+    if (n.nodeType === 1 && n.scrollWidth > n.clientWidth + 1 &&
+        /auto|scroll/.test(win.getComputedStyle(n).overflowX)) {
+      return true;
+    }
+  }
+  return false;
+}
+// A tab is mounted when first shown. A live tab is unmounted when left (and mounted anew
+// when shown again), so its sound and scripts stop with it.
+function selectTab(root, i, focus) {
+  const st = root && root.fcTabs;
+  if (!st) {
+    return false;
+  }
+  const to = Math.min(Math.max(i, 0), st.tabs.length - 1);
+  const from = st.current;
+  if (to !== from) {
+    if (from >= 0 && st.tabs[from].type === 'live') {
+      st.panels[from].replaceChildren();
+    }
+    st.buttons.forEach((b, k) => {
+      b.setAttribute('aria-selected', String(k === to));
+      b.tabIndex = k === to ? 0 : -1;
+      st.panels[k].hidden = k !== to;
+    });
+    const panel = st.panels[to];
+    if (!panel.hasChildNodes()) {
+      mountOne(panel, st.tabs[to].content, st.tabs[to].type);
+      if (typeof onTabMounted === 'function') {
+        onTabMounted(panel);
+      }
+    }
+    st.current = to;
+    if (root.parentElement) {
+      root.parentElement.scrollTop = 0;
+    }
+    if (st.buttons[to].scrollIntoView) {
+      st.buttons[to].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }
+  if (focus) {
+    st.buttons[to].focus();
+  }
+  return true;
+}
+// Moves the selection of the tabs in `el` (the card's back) by `by`; false when it has none.
+function tabsStep(el, by) {
+  const root = el.firstElementChild;
+  return !!root && !!root.fcTabs && selectTab(root, root.fcTabs.current + by);
+}
+let tabSeq = 0;
+function mountTabs(el, tabs) {
+  const doc = el.ownerDocument;
+  const make = (tag, className) => {
+    const node = doc.createElement(tag);
+    node.className = className;
+    return node;
+  };
+  const seq = ++tabSeq;
+  const root = make('div', 'fc-tabs');
+  const bar = make('div', 'fc-tabbar');
+  const body = make('div', 'fc-tabbody');
+  bar.setAttribute('role', 'tablist');
+  bar.setAttribute('aria-label', 'Card tabs');
+  const st = { tabs, buttons: [], panels: [], current: -1 };
+  tabs.forEach((t, i) => {
+    const button = make('button', 'fc-tab');
+    button.type = 'button';
+    button.id = 'fc-tab-' + seq + '-' + i;
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-controls', 'fc-panel-' + seq + '-' + i);
+    button.textContent = t.label || String(i + 1);
+    button.addEventListener('click', () => selectTab(root, i));
+    const panel = make('div', 'fc-tabpanel');
+    panel.id = 'fc-panel-' + seq + '-' + i;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', button.id);
+    panel.hidden = true;
+    bar.appendChild(button);
+    body.appendChild(panel);
+    st.buttons.push(button);
+    st.panels.push(panel);
+  });
+  bar.addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      return;
+    }
+    const to = { ArrowRight: st.current + 1, ArrowLeft: st.current - 1,
+                 Home: 0, End: tabs.length - 1 }[e.key];
+    if (to !== undefined) {
+      e.preventDefault();
+      selectTab(root, to, true);
+    }
+  });
+  let start = null;
+  body.addEventListener('touchstart', e => {
+    start = e.touches.length === 1
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY, target: e.target } : null;
+  }, { passive: true });
+  body.addEventListener('touchend', e => {
+    const t = e.changedTouches[0];
+    const s = start;
+    start = null;
+    if (!s || !t) {
+      return;
+    }
+    const dx = t.clientX - s.x;
+    const dy = t.clientY - s.y;
+    if (Math.abs(dx) >= SWIPE_MIN && Math.abs(dx) > 2 * Math.abs(dy) &&
+        !scrollsSideways(s.target, body)) {
+      selectTab(root, st.current + (dx < 0 ? 1 : -1));
+    }
+  }, { passive: true });
+  root.fcTabs = st;
+  root.append(bar, body);
+  el.replaceChildren(root);
+  selectTab(root, 0);
+}
+// Puts a card into `el`: its tabs, or the one card when there is no marker.
+function mountBack(el, content, type) {
+  const tabs = splitTabs(content, type);
+  if (tabs.length < 2) {
+    const one = tabs[0] || { content, type };
+    mountOne(el, one.content, one.type);
+    return;
+  }
+  mountTabs(el, tabs);
 }
 function renderHtml(content, type) {
   if (type === 'live') {
@@ -2483,6 +2679,9 @@ function sessionKey(key, mod, onButton) {
     if (key === 'Escape' || key === 'Backspace') {
       unflipCard();
       return true;
+    }
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      return tabsStep(document.getElementById('back-content'), key === 'ArrowRight' ? 1 : -1);
     }
     return false;
   }
@@ -3509,7 +3708,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.22.3';
+const APP_VERSION = '2026.11.22.4';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

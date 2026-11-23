@@ -352,6 +352,21 @@ await test('an unchanged row is not re-rendered; a changed one is', async () => 
   assert.equal(s.meta(), 'row 3 · c2 · md');
 });
 
+await test('a card with tabs shows its tab bar in the preview; a tab is mounted when chosen', async () => {
+  const svg = '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>';
+  const s = open([row('html', '<p>one</p>\n<!--tab svg: Plan-->\n' + svg + '\n<!--tab-->\n<p>three</p>')]);
+  await s.poll();
+  const tabs = [...s.back().querySelectorAll('.fc-tab')];
+  assert.deepEqual(tabs.map((b) => b.textContent), ['1', 'Plan', '3']);
+  assert.equal(s.back().querySelector('svg'), null, 'tab 2 is not mounted yet');
+  tabs[1].click();
+  assert.ok(s.back().querySelector('svg circle'));
+  assert.match(s.shadow().querySelector('style').textContent, /\.fc-tab\[aria-selected/);
+  s.back().querySelector('[role=tablist]').dispatchEvent(
+    new s.w.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+  assert.equal(s.back().querySelector('[aria-selected=true]').textContent, '3');
+});
+
 await test('a render error shows as a note instead of a silent blank card', async () => {
   const s = open([{ note: 'x' }]);
   await sleep(15);

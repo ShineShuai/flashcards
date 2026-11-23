@@ -704,6 +704,22 @@ Blooms ~2 weeks, late March to early April.</pre>
 &lt;/script&gt;
 </pre>
 
+<h3>Tabs: several pages in one card</h3>
+<p>A line that holds only an HTML comment starts a new tab: <code>&lt;!--tab--&gt;</code>, <code>&lt;!--tab svg--&gt;</code> (the type of that tab: text, md, html, svg or live), <code>&lt;!--tab md: Notes--&gt;</code> (type and label) or <code>&lt;!--tab: Notes--&gt;</code> (label only). The text before the first marker is tab 1; tabs without a label are numbered 1, 2, 3. A tab without a type has the card's <code>back_type</code>. The answer then has a tab bar: tap a tab, swipe sideways, or press <kbd>&larr;</kbd> / <kbd>&rarr;</kbd>.</p>
+<p>The card is still one card with one rating, so use tabs for views of the same answer (a picture, a diagram, a note), not for separate facts: make those separate cards. Each tab is sanitized and styled on its own, so a <code>&lt;style&gt;</code> block in one tab does not reach another. A tab is built when you first open it, and a <code>live</code> tab stops when you leave it. A marker must be alone on its line, otherwise it is part of the content. Older versions of the app show the tabs one after the other. A cell holds at most 50,000 characters: use Drive URLs, not <code>data:</code> images. The Flash menu preview shows the same tab bar (a card whose <code>back_type</code> is <code>live</code> is shown there as one frame).</p>
+<pre>
+&lt;h2&gt;桜&lt;/h2&gt;
+&lt;!--tab svg: Shape--&gt;
+&lt;svg viewBox="0 0 100 100" style="max-width:240px"&gt;
+  &lt;circle cx="50" cy="50" r="40" fill="#FFB7C5"/&gt;
+&lt;/svg&gt;
+&lt;!--tab md: Notes--&gt;
+- Blooms ~2 weeks
+- Symbol of mono no aware
+&lt;!--tab: Photo--&gt;
+&lt;img src="https://drive.google.com/thumbnail?id=FILE_ID&amp;sz=w1000"&gt;
+</pre>
+
 <!-- ── Drive images ────────────────────────────────────────────────────── -->
 <h2 id="drive-images">Drive Images in HTML Cards</h2>
 
@@ -813,6 +829,7 @@ Blooms ~2 weeks, late March to early April.</pre>
     <tr><td><code>1</code> <code>2</code> <code>3</code> <code>4</code> <code>5</code></td><td>Answer</td><td>Again · Recap · Hard · Good · Easy</td></tr>
     <tr><td><code>Enter</code></td><td>Answer</td><td>Rate with the suggested button</td></tr>
     <tr><td><code>Esc</code> / <code>Backspace</code></td><td>Answer</td><td>Back to the hints</td></tr>
+    <tr><td><code>&larr;</code> / <code>&rarr;</code></td><td>Answer</td><td>Previous / next tab (cards with tabs)</td></tr>
     <tr><td><code>Z</code> (or Ctrl/Cmd+Z)</td><td>Session, done screen</td><td>Undo the last rating</td></tr>
     <tr><td><code>Enter</code></td><td>Home, done screen</td><td>Start review / back to home</td></tr>
   </tbody>
