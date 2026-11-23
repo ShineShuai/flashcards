@@ -85,7 +85,7 @@ await test('forecast: hidden without data or with an empty list; all zeros are f
 
 await test('the server is told the client UTC offset for both calls', async () => {
   const env = await home({ forecast: FORECAST, activity: { today: 1, days: {} } });
-  const offset = -new Date().getTimezoneOffset();
+  const offset = -new Date().getTimezoneOffset() || 0;        // not -0 at UTC
   assert.deepEqual(plain(env.srv.bootstrapArgs[0]), [offset]);
   assert.deepEqual(plain(env.srv.activityArgs[0]), [offset]);
 });

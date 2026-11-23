@@ -15,8 +15,13 @@ async function test(name, fn) {
   }
 }
 
+// The app counts days from ROLLOVER_HOUR (studyDay): before 04:00 it is still yesterday's
+// study day. A fixture `daysAgo` study days back is dated from the current study day, so
+// daysBetween(at(n), now) is n at any time of day (a plain "today minus n" at 10:00 was n - 1
+// between 00:00 and 04:00, and the tests failed then).
+const ROLLOVER_HOUR = 4;
 const at = (daysAgo, hour = 10) => {
-  const d = new Date();
+  const d = new Date(Date.now() - ROLLOVER_HOUR * 3600000);
   d.setDate(d.getDate() - daysAgo);
   d.setHours(hour, 0, 0, 0);
   return d.toISOString();
@@ -49,6 +54,24 @@ async function open(options = {}) {
 const titles = (env) => [...env.w.document.querySelectorAll('#rc-list .rc-title')]
   .map((el) => el.textContent);
 const filters = (env) => [...env.w.document.querySelectorAll('#rc-filters button')];
+
+await test('fixtures: at(n) is n study days back at any time of day (same rollover as the app)', async () => {
+  const env = await open({ recallRows: [] });
+  assert.equal(env.w.eval('ROLLOVER_HOUR'), ROLLOVER_HOUR);
+  const realNow = Date.now;
+  try {
+    for (let hour = 0; hour < 24; hour++) {
+      const now = new Date(2026, 10, 23, hour, 30);                 // local 23 Nov, hh:30
+      Date.now = () => now.getTime();
+      for (const n of [0, 1, 40]) {
+        assert.equal(env.w.daysBetween(new Date(at(n)), now), n, `${hour}:30, ${n} days`);
+      }
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  env.w.close();
+});
 
 await test('every card, most urgent first, with the counts per status', async () => {
   const env = await open();

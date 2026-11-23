@@ -198,7 +198,7 @@ await test('Start after the cache expired asks the server again, with the offset
   env.w.eval('homeAt = 0');
   env.w.startSession();
   await until(() => env.srv.dueArgs.length === 1);
-  assert.deepEqual(plain(env.srv.dueArgs[0]), [-new Date().getTimezoneOffset()]);
+  assert.deepEqual(plain(env.srv.dueArgs[0]), [-new Date().getTimezoneOffset() || 0]);
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
