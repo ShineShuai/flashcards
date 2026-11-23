@@ -1,10 +1,10 @@
 // Run: node test/ui/session.test.mjs   (needs: npm install --no-save jsdom)
 // Session flow: re-queue, progress, 04:00 due times, Recap preview, shuffle.
 import assert from 'node:assert/strict';
-import { boot, card, sleep, until } from './harness.mjs';
+import { boot, card, daysAgo, NOW, sleep, until } from './harness.mjs';
 
 // ── re-queue, progress, rollover
-const past = () => new Date(Date.now() - 1000).toISOString();
+const past = () => new Date(NOW.getTime() - 1000).toISOString();
 {
   const env = boot({ cards: [card('1'), card('2'), card('3', 'c1;c2;c3;c4;c5'), card('4')] });
   await env.start();
@@ -147,10 +147,10 @@ const past = () => new Date(Date.now() - 1000).toISOString();
 }
 {
   // Again from Review is due immediately: +5 cards, no wait
-  const now = Date.now();
+  const now = NOW.getTime();
   const review = card('r1', 'x;y;z', {
     state: 2, stability: 20, difficulty: 6, scheduled_days: 20, reps: 5, lapses: 0,
-    last_review: new Date(now - 20 * 86400000).toISOString(),
+    last_review: daysAgo(20).toISOString(),
     due: new Date(now - 1000).toISOString(),
   });
   const env = boot({ cards: [review, card('2')] });
@@ -248,11 +248,11 @@ const past = () => new Date(Date.now() - 1000).toISOString();
 
 // ── Recap preview follows the hints; repeated weak keyword raises the streak
 {
-  const now = Date.now();
+  const now = NOW.getTime();
   const review = card('r1', 'x;y;z;w;v', {
     state: 2, stability: 40, difficulty: 6, scheduled_days: 38, reps: 5, lapses: 0,
     miss_streak: 1, weak_keywords: 'X;y',
-    last_review: new Date(now - 38 * 86400000).toISOString(),
+    last_review: daysAgo(38).toISOString(),
     due: new Date(now - 1000).toISOString(),
   });
   const env = boot({ cards: [review] });

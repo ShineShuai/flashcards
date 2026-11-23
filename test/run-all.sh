@@ -28,6 +28,11 @@ if node -e "require.resolve('jsdom')" 2>/dev/null; then
     echo "== $t"
     node "$t"
   done
+  # the tests on the pinned clock again, at 02:30: before the 04:00 rollover of the study day
+  for t in $(grep -l "NOW" test/ui/*.test.mjs); do
+    echo "== $t at 02:30"
+    FC_NOW=2026-11-23T02:30:00 node "$t"
+  done
 else
   echo "-- skipping test/ui (npm install --no-save jsdom@31.0.0 dompurify@3.4.17 marked@18.1.1)"
 fi

@@ -1,7 +1,7 @@
 // Run: node test/ui/settings.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
 // Scheduling form on the settings screen, and the new-card limit on Home.
 import assert from 'node:assert/strict';
-import { boot, card, sleep, until } from './harness.mjs';
+import { boot, card, NOW, sleep, until } from './harness.mjs';
 
 let failed = 0;
 async function test(name, fn) {
@@ -198,7 +198,7 @@ await test('Start after the cache expired asks the server again, with the offset
   env.w.eval('homeAt = 0');
   env.w.startSession();
   await until(() => env.srv.dueArgs.length === 1);
-  assert.deepEqual(plain(env.srv.dueArgs[0]), [-new Date().getTimezoneOffset() || 0]);
+  assert.deepEqual(plain(env.srv.dueArgs[0]), [-new Date(NOW).getTimezoneOffset() || 0]);
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

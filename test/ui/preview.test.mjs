@@ -45,7 +45,7 @@ function open(replies, { silent = false } = {}) {
         withSuccessHandler: (f) => run(f, bad),
         withFailureHandler: (f) => run(ok, f),
         getActiveRowPreview() {
-          calls.push(Date.now());
+          calls.push(Date.now());                    // wall clock ok: measures real time
           if (silent) return;
           const next = replies.length > 1 ? replies.shift() : replies[0];
           setTimeout(() => (next instanceof Error ? bad(next) : ok(next)), 0);

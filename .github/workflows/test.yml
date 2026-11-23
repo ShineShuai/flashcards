@@ -56,6 +56,13 @@ jobs:
             echo "== $f"
             node "$f"
           done
+      # The study day rolls over at 04:00 and the tests run on a pinned clock (harness NOW):
+      # the tests that use it must pass at any hour, so run them again at 02:30 too.
+      - run: |
+          for f in $(grep -l "NOW" test/ui/*.test.mjs); do
+            echo "== $f at 02:30"
+            FC_NOW=2026-11-23T02:30:00 node "$f"
+          done
 
   # Real Chromium: five rating buttons in one row, tap targets, no scrolling; the picture viewer
   layout:

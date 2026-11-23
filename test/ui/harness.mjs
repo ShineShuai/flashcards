@@ -12,6 +12,56 @@ import { fileURLToPath } from 'node:url';
 
 process.env.TZ ||= 'Europe/Berlin';
 
+// The page's clock. Tests must not depend on the wall clock: the app counts days from 04:00
+// (the study day) and DST moves a card's time of day, so a test run at the wrong hour of the
+// wrong day failed. Every window starts at NOW and runs on from there; fixtures are made from
+// NOW, never from Date.now(). FC_NOW=2026-11-23T02:30:00 (local time) runs a test at another
+// moment: CI repeats the date-using tests at 02:30, before the rollover. Keep FC_NOW off the
+// hours around a DST change: the app's studyDay subtracts 4 real hours, so on those two days
+// a year its boundary is an hour off the wall clock (and a test that counts calendar days
+// is too).
+export const NOW = process.env.FC_NOW ? new Date(process.env.FC_NOW) : new Date(2026, 10, 23, 14, 30, 0);
+if (Number.isNaN(NOW.getTime())) {
+  throw new Error('FC_NOW is not a date: ' + process.env.FC_NOW);
+}
+
+// The Date n calendar days before `from` (default NOW), at the same local time of day. Use it,
+// not "n * 24 h": across a DST change that lands an hour off, which can move a card across the
+// 04:00 rollover and change its gap by a day.
+export function daysAgo(n, from = NOW) {
+  const d = new Date(from);
+  d.setDate(d.getDate() - n);
+  return d;
+}
+
+// Replaces the window's Date by one that starts at `start` and ticks from there. `set` and
+// `advance` move it. (Only the window's: Node's stays real, so a test's own timeouts do too.)
+function installClock(w, start) {
+  const Real = w.Date;
+  let offset = new Date(start).getTime() - Real.now();
+  const now = () => Real.now() + offset;
+  function PinnedDate(...args) {
+    if (!new.target) {
+      return new Real(now()).toString();                  // Date() called as a function
+    }
+    return Reflect.construct(Real, args.length ? args : [now()], new.target);
+  }
+  PinnedDate.prototype = Real.prototype;                  // instanceof, methods: unchanged
+  PinnedDate.now = now;
+  PinnedDate.parse = Real.parse;
+  PinnedDate.UTC = Real.UTC;
+  w.Date = PinnedDate;
+  return {
+    now: () => new Real(now()),
+    set(moment) {
+      offset = new Date(moment).getTime() - Real.now();
+    },
+    advance(ms) {
+      offset += ms;
+    },
+  };
+}
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const html = fs.readFileSync(path.join(here, '..', '..', 'index.html'), 'utf8')
   .replace(/<script src="https:\/\/cdn[^>]*><\/script>/g, '')   // marked, DOMPurify: below
@@ -44,12 +94,15 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 //          recallRows [..] | Error (getRecallRows)
 //          aheadCards (refs) => [cards] | Error (getCardsIfUnchanged)
 //          server { failFirst, delay, reply }  (updateCard behaviour)
+//          now (a Date or anything new Date() takes; default NOW): where the page's clock starts;
+//          env.clock.now() / set(moment) / advance(ms) read and move it
 export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
           versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, newLimit,
           activity, horizonCards = [], applyHorizon, recallRows = [], aheadCards,
-          server = {} } = options;
+          server = {}, now = NOW } = options;
+  let clock;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], settingsCalls: [],
                 bootstrapArgs: [], activityArgs: [], dueArgs: [], horizonCalls: [],
@@ -62,6 +115,7 @@ export function boot(options = {}) {
     url: 'https://example.test/',
     pretendToBeVisual: true,
     beforeParse(w) {
+      clock = installClock(w, now);
       // A page interval (the version check) must not keep the test process alive
       w.setInterval = (fn, ms, ...rest) => {
         const timer = setInterval(fn, ms, ...rest);
@@ -198,7 +252,7 @@ export function boot(options = {}) {
   const w = dom.window;
   const $ = (id) => w.document.getElementById(id);
   return {
-    w, ev, srv, ver, $,
+    w, ev, srv, ver, $, clock,
     saved: srv.saved,
     txt: (id) => $(id).textContent,
     shown: (id) => !$(id).classList.contains('hidden'),

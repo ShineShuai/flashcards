@@ -2,19 +2,12 @@
 // Recall strip (gap, recall now, trail, best/failed, probation), the rating toast, the
 // recall fields in the save, the horizon guard's interval, and undo.
 import assert from 'node:assert/strict';
-import { boot, card, until } from './harness.mjs';
+import { boot, card, daysAgo as dateAgo, NOW, until } from './harness.mjs';
 
-// n calendar days back at the same local time of day, so the app's study-day gap is n at
-// any hour. (n * 24 h is n days only without a DST change in between: an hour off, which
-// moves the card across the 04:00 rollover and the gap by one.)
-const daysAgo = (n) => {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString();
-};
+const daysAgo = (n) => dateAgo(n).toISOString();             // calendar days back, see the harness
 const reviewCard = (extra = {}) => card('r1', 'x;y;z;w;v', {
   state: 2, stability: 60, difficulty: 6, scheduled_days: 38, reps: 6, lapses: 0,
-  last_review: daysAgo(40), due: new Date(Date.now() - 1000).toISOString(),
+  last_review: daysAgo(40), due: new Date(NOW.getTime() - 1000).toISOString(),
   trail: '1:G 4:G 12:G 32:G 77:H', ok_days: 32, fail_days: 77, ...extra,
 });
 const strips = (w) => [...w.document.querySelectorAll('.recall-strip')];
