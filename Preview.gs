@@ -30,8 +30,8 @@ function showPreviewWindow() {
 // and why: it names the sheet and row the script sees) or the selected row: { row, id,
 // title, type, content, sniffed, version }. A blank back_type shows as text, like in the app
 // (Flash > Highlight all fills blank types by sniffing); sniffed is what the content looks
-// like (text, md, html, svg), so the page can say when a card of type text looks like
-// something else. version is the script's.
+// like (text, md, html, svg; for a card with tabs, what tab 1 looks like), so the page can say
+// when a card of type text looks like something else. version is the script's.
 function getActiveRowPreview() {
   const sheet = SpreadsheetApp.getActiveSheet();
   const name = sheet.getName();
@@ -65,7 +65,7 @@ function getActiveRowPreview() {
     title: get('title'),
     type: get('back_type').toLowerCase().trim() || 'text',
     content: content,
-    sniffed: sniffType_(content),
+    sniffed: sniffCard_(content),
     version: APP_VERSION
   };
 }

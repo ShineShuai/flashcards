@@ -203,6 +203,7 @@ function mountOne(el, content, type) {
   shadow.innerHTML = markup;
   el.replaceChildren(host);
 }
+// @tabs-begin
 // One card, several tabs. A line that holds only an HTML comment "tab", "tab TYPE" or
 // "tab TYPE: Label" (also "tab: Label") starts the next tab. TYPE (text, md, html, svg,
 // live) replaces the card's back_type for that tab. The text before the first marker is
@@ -210,35 +211,45 @@ function mountOne(el, content, type) {
 // A comment is invisible in html, svg and md, so an older client shows the tabs one after
 // the other. (No literal comment opener here: the sidebar page embeds this block in a
 // <script>, where it would start the escaped state; hence the escaped dashes.)
+// This block is also copied into Highlight.gs by tools/sync-preview.mjs: the sheet tools
+// split a cell exactly as the app does. Each tab is content.slice(start, end); `type` is
+// the card's type, or null where the caller does not know it yet (the sheet sniffs it
+// from tab 1), and then a tab without a marker type has type null.
 const TAB_MARKER =
   /^[ \t]*<!\-\-[ \t]*tab(?:[ \t]+(text|md|html|svg|live))?[ \t]*(?::[ \t]*([^\n]*?))?[ \t]*\-\->[ \t]*$/gim;
 const TAB_LABEL_MAX = 40;
-const SWIPE_MIN = 60;                         // px; a swipe is mostly horizontal
 function splitTabs(content, type) {
   const tabs = [];
   let from = 0;
   let cur = { type, label: '' };
   const push = end => {
+    let start = from;
     let body = content.slice(from, end);
     if (from > 0) {
-      body = body.replace(/^\r?\n/, '');
+      const lead = /^\r?\n/.exec(body);
+      if (lead) {
+        start += lead[0].length;
+        body = body.slice(lead[0].length);
+      }
     }
     if (end < content.length) {
       body = body.replace(/\r?\n$/, '');
     }
     if (body.trim()) {
-      tabs.push({ type: cur.type, label: cur.label, content: body });
+      tabs.push({ type: cur.type, label: cur.label, content: body, start, end: start + body.length });
     }
   };
   for (const m of content.matchAll(TAB_MARKER)) {
     push(m.index);
     from = m.index + m[0].length;
-    cur = { type: (m[1] || type).toLowerCase(),
+    cur = { type: m[1] ? m[1].toLowerCase() : type,
             label: (m[2] || '').trim().slice(0, TAB_LABEL_MAX) };
   }
   push(content.length);
   return tabs;
 }
+// @tabs-end
+const SWIPE_MIN = 60;                         // px; a swipe is mostly horizontal
 // A swipe that starts in something that scrolls sideways (a wide table, code) is its own.
 function scrollsSideways(node, stop) {
   const win = stop.ownerDocument.defaultView;
@@ -481,6 +492,11 @@ function showLive(res) {
   frame.srcdoc = liveDocument(res.content);
   liveBox.textContent = '';
   liveBox.appendChild(frame);
+  watchLive(frame);
+}
+
+// If a live frame never reports back, say so (once the wait is over).
+function watchLive(frame) {
   setTimeout(() => {
     if (frame.isConnected && !frame.dataset.ready) {
       diag.hidden = false;
@@ -490,16 +506,28 @@ function showLive(res) {
   }, liveWaitMs);
 }
 
+// A live tab is mounted when it is first shown (mountBack calls this): watch its frame.
+function onTabMounted(panel) {
+  panel.querySelectorAll('iframe.live-frame').forEach(watchLive);
+}
+
+// The frames that may report: the live card's, and live tabs inside the card.
+function liveFrames() {
+  const inCard = cardRoot ? cardRoot.querySelectorAll('iframe.live-frame') : [];
+  return [...liveBox.querySelectorAll('iframe'), ...inCard];
+}
+
 window.addEventListener('message', e => {
   const d = e.data;
-  const frame = liveBox.querySelector('iframe');
-  if (frame && d && d.fcLive === true && typeof d.h === 'number' && isFinite(d.h) &&
-      frame.contentWindow === e.source) {
-    frame.dataset.ready = '1';
-    diag.hidden = true;
-    diag.textContent = '';
-    frame.style.height = Math.min(Math.max(Math.ceil(d.h), 40), 4000) + 'px';
-  }
+  if (!d || d.fcLive !== true || typeof d.h !== 'number' || !isFinite(d.h)) return;
+  liveFrames().forEach(frame => {
+    if (frame.contentWindow === e.source) {
+      frame.dataset.ready = '1';
+      diag.hidden = true;
+      diag.textContent = '';
+      frame.style.height = Math.min(Math.max(Math.ceil(d.h), 40), 4000) + 'px';
+    }
+  });
 });
 
 function show(res) {
@@ -522,8 +550,8 @@ function show(res) {
   document.getElementById('meta').textContent = 'row ' + res.row + ' · ' + res.id + ' · ' + res.type;
   showHint(res);
   try {
-    if (res.type === 'live') {
-      showLive(res);
+    if (res.type === 'live' && splitTabs(res.content, res.type).length < 2) {
+      showLive(res);                    // one live card: a frame of its own
     } else if (cardRoot) {
       showCard(res);
     } else {

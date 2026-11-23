@@ -4,10 +4,10 @@
 repos:
   - repo: local
     hooks:
-      # first: copies the card renderer of index.html into Sidebar.html (Flash > Preview),
-      # so the version stamp below covers the result
+      # first: copies the card renderer of index.html into Sidebar.html (Flash > Preview)
+      # and its tab splitter into Highlight.gs, so the version stamp below covers the result
       - id: sync-preview
-        name: copy the card renderer of index.html into Sidebar.html
+        name: copy the card renderer of index.html into Sidebar.html and Highlight.gs
         entry: node tools/sync-preview.mjs
         language: system
         pass_filenames: false

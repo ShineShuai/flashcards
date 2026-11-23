@@ -334,6 +334,46 @@ await test('a live frame that reports back is sized; one that stays silent is ca
   assert.equal(s.diag().hidden, true);
 });
 
+await test('a live tab in the preview: frame when shown, sized by its report, silent one called out', async () => {
+  const s = open([{ note: 'x' }]);
+  await sleep(15);
+  s.w.eval('liveWaitMs = 30');
+  s.replies[0] = row('html', '<p>a</p>\n<!--tab live-->\n<b>live</b>\n<!--tab-->\n<p>c</p>');
+  await s.poll();
+  assert.equal(s.liveFrame(), null, 'not in the live box');
+  assert.equal(s.back().querySelector('iframe'), null, 'not mounted before the tab is shown');
+  s.back().querySelectorAll('.fc-tab')[1].click();
+  const frame = s.back().querySelector('iframe.live-frame');
+  assert.ok(frame);
+  assert.equal(s.diag().hidden, true, 'not yet');
+  await sleep(60);
+  assert.match(s.diag().textContent, /did not start/);
+  s.w.dispatchEvent(new s.w.MessageEvent('message', { data: { fcLive: true, h: 150.4 },
+    source: frame.contentWindow }));
+  assert.equal(frame.style.height, '151px');
+  assert.equal(s.diag().hidden, true, 'a late report clears the notice');
+});
+
+await test('a live card with tabs shows the tab bar; one live card without tabs keeps its frame', async () => {
+  const s = open([row('live', '<b>1</b>\n<!--tab md-->\n# two')]);
+  await s.poll();
+  assert.equal(s.live().hidden, true);
+  assert.equal(s.host().hidden, false);
+  assert.equal(s.back().querySelectorAll('.fc-tab').length, 2);
+  assert.equal(s.back().querySelector('iframe.live-frame') !== null, true, 'tab 1 is live');
+  s.replies[0] = row('live', '<b>single</b>', 3);
+  await s.poll();
+  assert.equal(s.live().hidden, false);
+  assert.ok(s.liveFrame());
+  assert.equal(s.host().hidden, true);
+});
+
+await test('the hint judges a card with tabs by tab 1 (the row says what the sheet sniffed)', async () => {
+  const s = open([row('text', '# H\n<!--tab-->\n<p>x</p>', 2, 'md')]);
+  await s.poll();
+  assert.match(s.hint().textContent, /looks like md: set back_type to md/);
+});
+
 await test('an unchanged row is not re-rendered; a changed one is', async () => {
   const r = row('md', 'one');
   const s = open([r]);

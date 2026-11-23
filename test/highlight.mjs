@@ -8,8 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = fs.readFileSync(path.join(here, '..', 'Highlight.gs'), 'utf8');
-const { tokenize_, sniffType_, HL_STYLES } = vm.runInContext(
-  `${src}\n({ tokenize_, sniffType_, HL_STYLES })`, vm.createContext({}));
+const { tokenize_, sniffType_, HL_STYLES, tokenizeCard_, sniffCard_, thumbFor_, tabsSummary_,
+  splitTabs } = vm.runInContext(
+  `${src}\n({ tokenize_, sniffType_, HL_STYLES, tokenizeCard_, sniffCard_, thumbFor_,` +
+  ` tabsSummary_, splitTabs })`, vm.createContext({}));
 
 let failed = 0;
 const test = (name, fn) => {
@@ -181,6 +183,102 @@ test('sniffType_', () => {
 });
 
 // ── palette ─────────────────────────────────────────────────────────────────
+// ── cells with tabs (see splitTabs in index.html, copied into Highlight.gs) ──
+const cardToks = (text, kind) =>
+  Array.from(tokenizeCard_(text, kind), (t) => [t.cls, text.slice(t.s, t.e)]);
+const IMG = '<img src="https://e.test/a.png">';
+const IMG2 = '<img src="https://e.test/b.png">';
+const SVG = '<svg viewBox="0 0 1 1"><circle r="1"/></svg>';
+
+test('tabs: a cell without a marker is tokenized as before', () => {
+  for (const [text, kind] of [['<b a="1">x</b> &amp;', 'html'], ['# T\n- **b**', 'md'],
+    ['<!--tabs--> <p>', 'html'], ['x <!--tab--> y', 'html'], ['', 'html']]) {
+    assert.deepEqual(cardToks(text, kind), toks(text, kind));
+  }
+});
+
+test('tabs: each tab by its own type; marker lines are meta', () => {
+  const t = '<b>x</b>\n<!--tab md: Notes-->\n# H\n<!--tab-->\n<i>y</i>';
+  assert.deepEqual(cardToks(t, 'html'), [
+    ['tag', '<b'], ['tag', '>'], ['tag', '</b'], ['tag', '>'],
+    ['meta', '<!--tab md: Notes-->'], ['heading', '# H'], ['meta', '<!--tab-->'],
+    ['tag', '<i'], ['tag', '>'], ['tag', '</i'], ['tag', '>'],
+  ]);
+});
+
+test('tabs: an unclosed tag, comment or string in a tab does not swallow the next tab', () => {
+  for (const open of ['<div class="x', '<!-- never closed', '<style>a{', '<a href=\'']) {
+    const t = `${open}\n<!--tab-->\n<b>ok</b>`;
+    const got = cardToks(t, 'html');
+    assert.ok(got.some(([c, x]) => c === 'meta' && x === '<!--tab-->'), open);
+    assert.ok(got.some(([c, x]) => c === 'tag' && x === '<b'), open + ' then <b');
+  }
+});
+
+test('tabs: offsets are cell offsets after emoji, CRLF and a type override', () => {
+  const t = '😀 <u>a</u>\r\n<!--tab md-->\r\n😀 **b**\r\n<!--tab text-->\r\n<x>';
+  const got = cardToks(t, 'html');
+  assert.deepEqual(got.filter(([c]) => c === 'tag').map(([, x]) => x), ['<u', '>', '</u', '>']);
+  assert.ok(got.some(([c, x]) => c === 'bold' && x === '**b**'));
+  assert.equal(got.some(([, x]) => x === '<x'), false, 'a text tab has no tokens');
+});
+
+test('tabs: tokens are sorted, non-empty, inside the cell and never overlap (fuzz)', () => {
+  const parts = ['<div class="a">', '</div>', '<!--tab-->', '<!--tab md: L-->', '<!--tab svg-->',
+    '# h', '- x', '**b**', '<!-- c -->', '<style>p{}</style>', '😀', ' ', '\n', '\r\n', '"', "'",
+    '<', '>', '&amp;', '<!--tab', 'tab-->', '`c`', '[l](u)'];
+  let seed = 7;
+  const rnd = (n) => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n;
+  for (let i = 0; i < 400; i++) {
+    const text = Array.from({ length: 1 + rnd(14) }, () => parts[rnd(parts.length)]).join('');
+    const kind = ['html', 'md', 'svg', 'live', 'text'][rnd(5)];
+    let end = 0;
+    for (const t of tokenizeCard_(text, kind)) {
+      assert.ok(t.s >= end && t.e > t.s && t.e <= text.length, JSON.stringify(text));
+      end = t.e;
+    }
+  }
+});
+
+test('sniffCard_: tab 1 decides; a marker type on tab 1 wins; no marker = sniffType_', () => {
+  for (const text of ['# h', '<p>x</p>', SVG, 'plain', '', '  ', 'x <!--tab--> y']) {
+    assert.equal(sniffCard_(text), sniffType_(text), JSON.stringify(text));
+  }
+  assert.equal(sniffCard_('# Notes\n<!--tab-->\n<p>x</p>'), 'md', 'tab 1, not the whole cell');
+  assert.equal(sniffCard_('<p>x</p>\n<!--tab md-->\n# h'), 'html');
+  assert.equal(sniffCard_('<!--tab md-->\n<p>x</p>'), 'md', 'marker type of tab 1');
+  assert.equal(sniffCard_('<!--tab-->\n' + SVG + '\n<!--tab-->\n<p>x</p>'), 'svg');
+  assert.equal(sniffCard_('<!--tab-->\n<!--tab-->'), 'text', 'only markers');
+});
+
+test('thumbFor_: the first html tab that is one hosted picture; others as before', () => {
+  const f = (u) => `=IMAGE("${u}")`;
+  assert.equal(thumbFor_('html', IMG), f('https://e.test/a.png'));
+  assert.equal(thumbFor_('html', `<p>t</p>\n<!--tab svg-->\n${SVG}\n<!--tab-->\n${IMG}`),
+    f('https://e.test/a.png'));
+  assert.equal(thumbFor_('html', `${IMG}\n<!--tab-->\n${IMG2}`), f('https://e.test/a.png'));
+  assert.equal(thumbFor_('html', `<p>t</p>\n<!--tab-->\n${IMG2}`), f('https://e.test/b.png'));
+  assert.equal(thumbFor_('md', `# t\n<!--tab html-->\n${IMG}`), f('https://e.test/a.png'),
+    'a tab typed html counts in a card of another type');
+  assert.equal(thumbFor_('html', `${IMG}\n<!--tab md-->\n# t`), f('https://e.test/a.png'));
+  assert.equal(thumbFor_('html', `<p>t</p>\n<!--tab-->\n<p>${IMG}</p>`), '', 'not just a picture');
+  assert.equal(thumbFor_('svg', `${SVG}\n<!--tab-->\n${SVG}`), '');
+  assert.equal(thumbFor_('md', IMG), '');
+  assert.equal(thumbFor_('html', `<!--tab md-->\n${IMG}`), '', 'its tab is md, not html');
+});
+
+test('tabsSummary_: the types of the tabs; empty below two; img for a picture tab', () => {
+  assert.equal(tabsSummary_('html', IMG), '');
+  assert.equal(tabsSummary_('html', '<p>x</p>'), '');
+  assert.equal(tabsSummary_('html', ''), '');
+  assert.equal(tabsSummary_('html', `<p>t</p>\n<!--tab svg-->\n${SVG}\n<!--tab-->\n${IMG}`),
+    'html · svg · img');
+  assert.equal(tabsSummary_('md', '# a\n<!--tab html: P-->\n<p>b</p>'), 'md · html');
+  assert.equal(tabsSummary_('html', '<!--tab-->\n\n<!--tab-->\nx'), '', 'blank tabs do not count');
+  const many = Array.from({ length: 9 }, (_, i) => 'x' + i).join('\n<!--tab-->\n');
+  assert.equal(tabsSummary_('text', many), 'text · text · text · text · text · text · +3');
+});
+
 test('every highlight color has at least 4.5:1 contrast on white', () => {
   const lum = (hex) => {
     const [r, g, b] = [1, 3, 5].map((i) => {

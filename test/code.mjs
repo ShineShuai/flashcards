@@ -351,8 +351,9 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
     ` rebuildHorizons, replayRecall_, getHorizonCards, applyHorizon, getRecallRows,` +
     ` getCardsIfUnchanged,` +
-    ` tokenize_, sniffType_, imageFormula_, thumbFor_, getActiveRowPreview,` +
-    ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER,` +
+    ` tokenize_, sniffType_, sniffCard_, tokenizeCard_, tabsSummary_, imageFormula_, thumbFor_,` +
+    ` addTabsColumn, getActiveRowPreview,` +
+    ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER, TABS_HEADER,` +
     ` bootstrap: typeof bootstrap === 'function' ? bootstrap : null })`, ctx);
   return { api, ss, sheets, stats, Sheet, ctx, menu };
 }
@@ -732,10 +733,13 @@ if (isMain) {
   });
 
   // ── sheet tools: highlight, sniffing, thumbnails, preview ────────────────
-  const toolSheet = (rows, { thumb = false } = {}) => {
+  const toolSheet = (rows, { thumb = false, tabs = false } = {}) => {
     const env = fixture();
     if (thumb) {
       env.sheet.raw(1, 17, 'back_thumb');
+    }
+    if (tabs) {
+      env.sheet.raw(1, thumb ? 18 : 17, 'back_tabs');
     }
     rows.forEach((r, i) => env.put(i + 2, r));
     return env;
@@ -893,10 +897,82 @@ if (isMain) {
     assert.equal(card.back_content, pic);
   });
 
+  // ── cells with tabs ──────────────────────────────────────────────────────
+  const tabbed = `<p>t</p>\n<!--tab svg: Shape-->\n${svgDoc}\n<!--tab-->\n${pic}`;
+
+  test('tabs: a blank back_type is sniffed from tab 1; each tab is styled by its own type', () => {
+    const env = toolSheet([{ id: 'a', back_content: '# Head\n<!--tab html-->\n<b>x</b>' }]);
+    edit(env, 2, 4);
+    assert.equal(env.sheet.get(2, 5), 'md');
+    const c = (cls) => env.api.HL_STYLES[cls].color;
+    assert.deepEqual(runs(env, 2), [['# Head', c('heading')], ['<!--tab html-->', c('meta')],
+      ['<b', c('tag')], ['>', c('tag')], ['</b', c('tag')], ['>', c('tag')]]);
+  });
+
+  test('tabs: the thumbnail comes from the first picture tab; none without one', () => {
+    const env = toolSheet([{ id: 'a', back_content: tabbed, back_type: 'html' },
+      { id: 'b', back_content: `<p>t</p>\n<!--tab-->\n<p>u</p>`, back_type: 'html' }],
+    { thumb: true });
+    edit(env, 2, 4, 2);
+    assert.equal(env.sheet.get(2, 17).formula, picUrl);
+    assert.equal(env.sheet.get(3, 17).formula, undefined);
+    assert.equal(env.sheet.heights.get(3), undefined);
+  });
+
+  test('tabs: back_tabs lists the types of the tabs; blank for a card with fewer than two', () => {
+    const env = toolSheet([{ id: 'a', back_content: tabbed, back_type: 'html' },
+      { id: 'b', back_content: '<p>one</p>', back_type: 'html' },
+      { id: 'c', back_content: '# a\n<!--tab html-->\n<p>b</p>', back_type: 'md' }],
+    { tabs: true });
+    edit(env, 2, 4, 3);
+    assert.deepEqual([2, 3, 4].map((r) => env.sheet.get(r, 17)), ['html · svg · img', '', 'md · html']);
+    assert.equal(env.stats.calls.setValues, 1, 'one write for the column');
+    env.sheet.put(3, 4, '<p>x</p>\n<!--tab-->\n<p>y</p>');
+    edit(env, 3, 4);
+    assert.equal(env.sheet.get(3, 17), 'html · html');
+  });
+
+  test('addTabsColumn adds the header once, after the last column, and fills it', () => {
+    const env = toolSheet([{ id: 'a', back_content: tabbed, back_type: 'html' }], { thumb: true });
+    const total = plain(env.api.addTabsColumn());
+    const next = env.api.HEADERS.length + 1;
+    assert.equal(env.sheet.get(1, next), 'back_tabs');
+    assert.equal(total.tabs, 1);
+    assert.equal(env.sheet.get(2, next), 'html · svg · img');
+    assert.match(env.menu.toast, /, 1 with tabs$/);
+    env.api.addTabsColumn();
+    assert.equal(env.sheet.get(1, next + 1), '', 'no second column');
+  });
+
+  test('highlightAll without tool columns reports and counts as before', () => {
+    const env = toolSheet([{ id: 'a', back_content: tabbed, back_type: 'html' }]);
+    assert.deepEqual(plain(env.api.highlightAll()), { styled: 1, typed: 0, thumbs: 0 });
+    assert.match(env.menu.toast, /^1 cells styled, 0 back_type filled$/);
+  });
+
+  test('the app never receives back_tabs', () => {
+    const env = toolSheet([{ id: 'a', back_content: tabbed, back_type: 'html' }],
+      { thumb: true, tabs: true });
+    edit(env, 2, 4);
+    const card = plain(env.api.bootstrap()).cards[0];
+    assert.equal('back_tabs' in card, false);
+    assert.equal('back_thumb' in card, false);
+    assert.equal(card.back_content, tabbed);
+  });
+
+  test('getActiveRowPreview: sniffed is what tab 1 looks like', () => {
+    const env = toolSheet([{ id: 'a', back_content: '# Head\n<!--tab-->\n<p>x</p>', back_type: 'text' }]);
+    env.ctx.__active = env.sheet;
+    env.sheet.active = { r: 2, c: 1 };
+    const res = plain(env.api.getActiveRowPreview());
+    assert.equal(res.sniffed, 'md');
+    assert.equal(res.type, 'text');
+  });
+
   test('Flash menu: every item points at a function that exists', () => {
     const env = loadCodeGs();
     env.api.onOpen();
-    assert.deepEqual(env.menu.items.map((i) => i[0]), Array(6).fill('Flash'));
+    assert.deepEqual(env.menu.items.map((i) => i[0]), Array(7).fill('Flash'));
     for (const [, , fn] of env.menu.items) {
       assert.equal(vm.runInContext('typeof ' + fn, env.ctx), 'function', fn);
     }

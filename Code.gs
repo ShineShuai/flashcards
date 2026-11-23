@@ -4,8 +4,10 @@ const SHEET_NAME = 'cards';
 const LOG_SHEET_NAME = 'review_log';
 const SETTINGS_SHEET_NAME = 'settings';     // personal overrides of DEFAULTS (Config.gs)
 const WEIGHTS_SHEET_NAME = 'weights_history';
-// Optional column of SVG thumbnails (Highlight.gs); never sent to the app
+// Optional tool columns (Highlight.gs): picture thumbnails, the types of a card's tabs;
+// never sent to the app
 const THUMB_HEADER = 'back_thumb';
+const TABS_HEADER = 'back_tabs';
 // The study day starts at this local hour; keep equal to ROLLOVER_HOUR in index.html
 const ROLLOVER_HOUR = 4;
 const FORECAST_DAYS = 30;
@@ -212,7 +214,7 @@ function readCards_() {
     .map(row => {
       const c = {};
       headers.forEach((h, i) => {
-        if (h !== THUMB_HEADER) c[h] = row[i];
+        if (h !== THUMB_HEADER && h !== TABS_HEADER) c[h] = row[i];
       });
       return c;
     });

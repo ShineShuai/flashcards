@@ -43,7 +43,18 @@ const split = async (content, type = 'html') => {
 
 await test('splitTabs: no marker is one tab with the content untouched', async () => {
   const text = '\n  keep  \n<p>x</p>\n';
-  assert.deepEqual(await split(text), [{ type: 'html', label: '', content: text }]);
+  assert.deepEqual(await split(text),
+    [{ type: 'html', label: '', content: text, start: 0, end: text.length }]);
+});
+
+await test('splitTabs: start/end locate each tab in the cell; a null type stays null', async () => {
+  const cell = 'A\r\n<!--tab md-->\r\nB\n<!--tab-->\n\n<!--tab: L-->\n€ C\n';
+  const t = await split(cell, null);
+  assert.deepEqual(t.map((x) => [x.type, x.label, x.content]),
+    [[null, '', 'A'], ['md', '', 'B'], [null, 'L', '€ C\n']]);
+  for (const x of t) {
+    assert.equal(cell.slice(x.start, x.end), x.content);
+  }
 });
 
 await test('splitTabs: markers, type override, label; first text is tab 1', async () => {

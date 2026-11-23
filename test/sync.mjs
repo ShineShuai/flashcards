@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cssLiteral, extractShell, run, syncSidebar } from '../tools/sync-preview.mjs';
+import { cssLiteral, extractShell, run, syncHighlight, syncSidebar } from '../tools/sync-preview.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
@@ -24,6 +24,7 @@ function test(name, fn) {
 
 const index = read('index.html');
 const sidebar = read('Sidebar.html');
+const highlight = read('Highlight.gs');
 const inlineScripts = () => [...sidebar.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g)]
   .map((m) => m[1]);
 
@@ -99,9 +100,32 @@ test('extractShell: an index.html without the pieces is an error', () => {
     '<script src="https://cdn.jsdelivr.net/npm/b"></script>';
   assert.throws(() => extractShell(tags + '// @render-begin\nx\n// @render-end'), /<style>/);
   assert.throws(() => extractShell(tags + '<style>a{}</style>'), /@render block/);
-  const shell = extractShell(tags + '<style>a{}</style>\n// @render-begin\nfunction x() {}\n\n// @render-end\n');
+  const render = '<style>a{}</style>\n// @render-begin\nfunction x() {}\n\n// @render-end\n';
+  assert.throws(() => extractShell(tags + render), /@tabs block/);
+  const shell = extractShell(tags + render + '// @tabs-begin\nconst T = 1;\n\n// @tabs-end\n');
   assert.equal(shell.render, 'function x() {}');
   assert.equal(shell.css, 'a{}');
+  assert.equal(shell.tabs, 'const T = 1;');
+});
+
+test('Highlight.gs holds the tab splitter of index.html, so the sheet splits a cell as the app does', () => {
+  const shell = extractShell(index);
+  assert.ok(highlight.includes(shell.tabs), 'the copy');
+  assert.match(shell.tabs, /const TAB_MARKER =/);
+  assert.match(shell.tabs, /function splitTabs\(content, type\)/);
+  assert.equal(shell.tabs.includes('@tabs-'), false);
+  assert.ok(shell.render.includes(shell.tabs), 'the tab splitter is part of the sidebar block too');
+  assert.equal((highlight.match(/function splitTabs\(/g) || []).length, 1, 'one copy, no hand-made one');
+});
+
+test('syncHighlight: rewrites its region, leaves the rest, is idempotent; markers are required', () => {
+  const shell = { tabs: 'const T = 1;' };
+  const gs = 'a();\n// @sync-tabs-begin\nOLD\n// @sync-tabs-end\nb();\n';
+  const once = syncHighlight(gs, shell);
+  assert.equal(once, 'a();\n// @sync-tabs-begin\nconst T = 1;\n// @sync-tabs-end\nb();\n');
+  assert.equal(syncHighlight(once, shell), once);
+  assert.throws(() => syncHighlight('nothing', shell), /Highlight\.gs: the "tabs" region/);
+  assert.throws(() => syncHighlight(gs + '// @sync-tabs-begin\n', shell), /"tabs" region/);
 });
 
 test('cssLiteral: a literal that is safe inside a <script>', () => {

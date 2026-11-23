@@ -3,9 +3,11 @@
 // sniffing and optional picture thumbnails. They run on every edit (simple trigger
 // onEdit) and from the Flash menu, never from the web app. Cell values change
 // only where noted: a blank back_type is filled by sniffing, and the back_thumb
-// column (if present) holds =IMAGE(url) for each html card that is one hosted
-// <img src="https://...">. There is no thumbnail of an SVG: IMAGE takes http(s)
-// URLs only (a data: URI is "not a valid url"), and the preview shows SVGs.
+// column (if present) holds =IMAGE(url) for each html card whose first picture tab (or
+// whole card) is one hosted <img src="https://...">. There is no thumbnail of an SVG:
+// IMAGE takes http(s) URLs only (a data: URI is "not a valid url"), and the preview shows
+// SVGs. A cell can hold several tabs (see splitTabs); the back_tabs column (if present)
+// lists their types.
 
 const EDIT_ROW_CAP = 500;          // rows one edit may restyle; Flash > Highlight all: the rest
 const HIGHLIGHT_CHUNK = 300;
@@ -30,6 +32,56 @@ const HL_STYLES = {
   em:       { italic: true }
 };
 
+// ─── Tabs ──────────────────────────────────────────────────────────────────
+// splitTabs and TAB_MARKER are copied from index.html by tools/sync-preview.mjs (CI checks
+// that the copy is current): edit them there, not here.
+// @sync-tabs-begin
+// One card, several tabs. A line that holds only an HTML comment "tab", "tab TYPE" or
+// "tab TYPE: Label" (also "tab: Label") starts the next tab. TYPE (text, md, html, svg,
+// live) replaces the card's back_type for that tab. The text before the first marker is
+// tab 1; blank tabs are dropped. Without a marker the card is one tab, as it always was.
+// A comment is invisible in html, svg and md, so an older client shows the tabs one after
+// the other. (No literal comment opener here: the sidebar page embeds this block in a
+// <script>, where it would start the escaped state; hence the escaped dashes.)
+// This block is also copied into Highlight.gs by tools/sync-preview.mjs: the sheet tools
+// split a cell exactly as the app does. Each tab is content.slice(start, end); `type` is
+// the card's type, or null where the caller does not know it yet (the sheet sniffs it
+// from tab 1), and then a tab without a marker type has type null.
+const TAB_MARKER =
+  /^[ \t]*<!\-\-[ \t]*tab(?:[ \t]+(text|md|html|svg|live))?[ \t]*(?::[ \t]*([^\n]*?))?[ \t]*\-\->[ \t]*$/gim;
+const TAB_LABEL_MAX = 40;
+function splitTabs(content, type) {
+  const tabs = [];
+  let from = 0;
+  let cur = { type, label: '' };
+  const push = end => {
+    let start = from;
+    let body = content.slice(from, end);
+    if (from > 0) {
+      const lead = /^\r?\n/.exec(body);
+      if (lead) {
+        start += lead[0].length;
+        body = body.slice(lead[0].length);
+      }
+    }
+    if (end < content.length) {
+      body = body.replace(/\r?\n$/, '');
+    }
+    if (body.trim()) {
+      tabs.push({ type: cur.type, label: cur.label, content: body, start, end: start + body.length });
+    }
+  };
+  for (const m of content.matchAll(TAB_MARKER)) {
+    push(m.index);
+    from = m.index + m[0].length;
+    cur = { type: m[1] ? m[1].toLowerCase() : type,
+            label: (m[2] || '').trim().slice(0, TAB_LABEL_MAX) };
+  }
+  push(content.length);
+  return tabs;
+}
+// @sync-tabs-end
+
 // ─── back_type sniffing ────────────────────────────────────────────────────
 
 function sniffType_(text) {
@@ -47,6 +99,13 @@ function sniffType_(text) {
     return 'md';
   }
   return 'text';
+}
+
+// The back_type of a cell: the type of tab 1 (a marker type wins), else what its text
+// looks like. A cell without a marker is one tab: sniffType_(text).
+function sniffCard_(text) {
+  const first = splitTabs(String(text), null)[0];
+  return first ? first.type || sniffType_(first.content) : 'text';
 }
 
 // ─── Tokenizer: tokenize_(text, kind) -> [{ s, e, cls }] ───────────────────
@@ -279,6 +338,21 @@ function tokenize_(text, kind) {
   return [];
 }
 
+// Tokens of a whole cell, sorted: each tab by its own type (offsets shifted into the cell)
+// and the marker lines as meta. Without a marker it is tokenize_(text, kind).
+function tokenizeCard_(text, kind) {
+  const out = [];
+  for (const m of text.matchAll(TAB_MARKER)) {
+    out.push({ s: m.index, e: m.index + m[0].length, cls: 'meta' });
+  }
+  splitTabs(text, kind).forEach(t => {
+    tokenize_(t.content, t.type).forEach(k => {
+      out.push({ s: k.s + t.start, e: k.e + t.start, cls: k.cls });
+    });
+  });
+  return out.sort((a, b) => a.s - b.s);
+}
+
 // ─── Sheets adapters ───────────────────────────────────────────────────────
 
 function textStyle_(spec) {
@@ -292,7 +366,7 @@ function textStyle_(spec) {
 function richText_(text, kind) {
   const builder = SpreadsheetApp.newRichTextValue().setText(text);
   const styles = {};
-  tokenize_(text, kind).forEach(t => {
+  tokenizeCard_(text, kind).forEach(t => {
     styles[t.cls] = styles[t.cls] || textStyle_(HL_STYLES[t.cls]);
     builder.setTextStyle(t.s, t.e, styles[t.cls]);
   });
@@ -307,20 +381,38 @@ function imageFormula_(html) {
   return url && url.length <= THUMB_MAX_URL ? '=IMAGE("' + url + '")' : '';
 }
 
-// The thumbnail of a card: only an html card that is one hosted picture has one.
+// The thumbnail of a card: that of its first tab that is html and one hosted picture (a
+// card without a marker is one tab), else ''.
 function thumbFor_(kind, text) {
-  return kind === 'html' ? imageFormula_(text) : '';
+  for (const t of splitTabs(String(text), kind)) {
+    const formula = t.type === 'html' ? imageFormula_(t.content) : '';
+    if (formula) return formula;
+  }
+  return '';
+}
+
+// What the back_tabs column shows: the type of each tab, "html · svg · img" (an html tab
+// that is one <img> reads img); '' for a card with fewer than two tabs.
+const TABS_SUMMARY_MAX = 6;
+function tabsSummary_(kind, text) {
+  const tabs = splitTabs(String(text), kind);
+  if (tabs.length < 2) return '';
+  const names = tabs.slice(0, TABS_SUMMARY_MAX).map(t =>
+    t.type === 'html' && /^\s*<img\b[^>]*>\s*$/i.test(t.content) ? 'img' : t.type);
+  if (tabs.length > TABS_SUMMARY_MAX) names.push('+' + (tabs.length - TABS_SUMMARY_MAX));
+  return names.join(' · ');
 }
 
 // 1-based columns of the sheet's tool columns; 0 when a column is missing.
 function toolColumns_(sheet) {
   const headers = readHeaders_(sheet);
   const col = name => headers.indexOf(name) + 1;
-  return { content: col('back_content'), type: col('back_type'), thumb: col(THUMB_HEADER) };
+  return { content: col('back_content'), type: col('back_type'), thumb: col(THUMB_HEADER),
+           tabs: col(TABS_HEADER) };
 }
 
 // Restyles `count` rows from `row`: rich text, a sniffed back_type where it is blank,
-// thumbnails. One read and one write per kind. Formulas, numbers, dates and blank
+// thumbnails, the tab summary. One read and one write per kind. Formulas, numbers, dates and blank
 // cells are left alone (rewriting them as rich text would replace the value).
 function updateRows_(sheet, row, count, cols) {
   const done = { styled: 0, typed: 0, thumbs: 0 };
@@ -332,20 +424,22 @@ function updateRows_(sheet, row, count, cols) {
   const typed = types ? types.map(r => [r[0]]) : null;
   const rich = [];
   const thumbs = [];
+  const summaries = [];
   const heights = [];
   texts.forEach((cell, i) => {
     const text = typeof cell[0] === 'string' ? cell[0] : '';
     let type = types ? String(types[i][0]).toLowerCase().trim() : '';
     if (types && !type && text.trim()) {
-      type = sniffType_(text);
+      type = sniffCard_(text);
       typed[i][0] = type;
       done.typed += 1;
     }
-    const kind = type || sniffType_(text);
+    const kind = type || sniffCard_(text);
     const skip = formulas[i][0] !== '' || typeof cell[0] !== 'string' || text === '';
     rich.push(skip ? null : richText_(text, kind));
     const thumb = thumbFor_(kind, text);
     thumbs.push([thumb]);
+    summaries.push([tabsSummary_(kind, text)]);
     if (thumb) heights.push(row + i);
   });
   if (done.typed) sheet.getRange(row, cols.type, count, 1).setValues(typed);
@@ -365,6 +459,10 @@ function updateRows_(sheet, row, count, cols) {
     sheet.getRange(row, cols.thumb, count, 1).setFormulas(thumbs);
     heights.forEach(r => sheet.setRowHeight(r, THUMB_ROW_HEIGHT));
     done.thumbs = heights.length;
+  }
+  if (cols.tabs) {
+    sheet.getRange(row, cols.tabs, count, 1).setValues(summaries);
+    done.tabs = summaries.filter(r => r[0]).length;
   }
   return done;
 }
@@ -395,23 +493,33 @@ function highlightAll() {
   const last = sheet.getLastRow();
   for (let row = 2; row <= last; row += HIGHLIGHT_CHUNK) {
     const done = updateRows_(sheet, row, Math.min(HIGHLIGHT_CHUNK, last - row + 1), cols);
-    Object.keys(total).forEach(k => { total[k] += done[k]; });
+    Object.keys(done).forEach(k => { total[k] = (total[k] || 0) + done[k]; });
   }
   SpreadsheetApp.getActiveSpreadsheet().toast(
     total.styled + ' cells styled, ' + total.typed + ' back_type filled' +
-    (cols.thumb ? ', ' + total.thumbs + ' thumbnails' : ''), 'Flash', 6);
+    (cols.thumb ? ', ' + total.thumbs + ' thumbnails' : '') +
+    (cols.tabs ? ', ' + (total.tabs || 0) + ' with tabs' : ''), 'Flash', 6);
   return total;
+}
+
+// Adds a tool column header after the last column, unless the sheet has it.
+function addToolColumn_(sheet, header, width) {
+  if (readHeaders_(sheet).indexOf(header) >= 0) return;
+  const col = Math.max(sheet.getLastColumn(), 1) + 1;
+  sheet.getRange(1, col).setValue(header)
+    .setBackground('#7C3AFF').setFontColor('#FFFFFF').setFontWeight('bold');
+  sheet.setColumnWidth(col, width);
 }
 
 // Flash menu: adds the back_thumb column (once) and fills it.
 function addThumbnailColumn() {
-  const sheet = getSheet_();
-  if (!toolColumns_(sheet).thumb) {
-    const col = Math.max(sheet.getLastColumn(), 1) + 1;
-    sheet.getRange(1, col).setValue(THUMB_HEADER)
-      .setBackground('#7C3AFF').setFontColor('#FFFFFF').setFontWeight('bold');
-    sheet.setColumnWidth(col, 120);
-  }
+  addToolColumn_(getSheet_(), THUMB_HEADER, 120);
+  return highlightAll();
+}
+
+// Flash menu: adds the back_tabs column (once) and fills it.
+function addTabsColumn() {
+  addToolColumn_(getSheet_(), TABS_HEADER, 150);
   return highlightAll();
 }
 
@@ -422,6 +530,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Highlight all back_content', 'highlightAll')
     .addItem('Add picture thumbnail column', 'addThumbnailColumn')
+    .addItem('Add tabs column', 'addTabsColumn')
     .addItem('Rebuild recall history', 'rebuildHorizonsMenu')
     .addItem('Check sheet tools', 'checkSheetTools')
     .addToUi();

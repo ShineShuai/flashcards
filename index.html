@@ -2035,6 +2035,7 @@ function mountOne(el, content, type) {
   shadow.innerHTML = markup;
   el.replaceChildren(host);
 }
+// @tabs-begin
 // One card, several tabs. A line that holds only an HTML comment "tab", "tab TYPE" or
 // "tab TYPE: Label" (also "tab: Label") starts the next tab. TYPE (text, md, html, svg,
 // live) replaces the card's back_type for that tab. The text before the first marker is
@@ -2042,35 +2043,45 @@ function mountOne(el, content, type) {
 // A comment is invisible in html, svg and md, so an older client shows the tabs one after
 // the other. (No literal comment opener here: the sidebar page embeds this block in a
 // <script>, where it would start the escaped state; hence the escaped dashes.)
+// This block is also copied into Highlight.gs by tools/sync-preview.mjs: the sheet tools
+// split a cell exactly as the app does. Each tab is content.slice(start, end); `type` is
+// the card's type, or null where the caller does not know it yet (the sheet sniffs it
+// from tab 1), and then a tab without a marker type has type null.
 const TAB_MARKER =
   /^[ \t]*<!\-\-[ \t]*tab(?:[ \t]+(text|md|html|svg|live))?[ \t]*(?::[ \t]*([^\n]*?))?[ \t]*\-\->[ \t]*$/gim;
 const TAB_LABEL_MAX = 40;
-const SWIPE_MIN = 60;                         // px; a swipe is mostly horizontal
 function splitTabs(content, type) {
   const tabs = [];
   let from = 0;
   let cur = { type, label: '' };
   const push = end => {
+    let start = from;
     let body = content.slice(from, end);
     if (from > 0) {
-      body = body.replace(/^\r?\n/, '');
+      const lead = /^\r?\n/.exec(body);
+      if (lead) {
+        start += lead[0].length;
+        body = body.slice(lead[0].length);
+      }
     }
     if (end < content.length) {
       body = body.replace(/\r?\n$/, '');
     }
     if (body.trim()) {
-      tabs.push({ type: cur.type, label: cur.label, content: body });
+      tabs.push({ type: cur.type, label: cur.label, content: body, start, end: start + body.length });
     }
   };
   for (const m of content.matchAll(TAB_MARKER)) {
     push(m.index);
     from = m.index + m[0].length;
-    cur = { type: (m[1] || type).toLowerCase(),
+    cur = { type: m[1] ? m[1].toLowerCase() : type,
             label: (m[2] || '').trim().slice(0, TAB_LABEL_MAX) };
   }
   push(content.length);
   return tabs;
 }
+// @tabs-end
+const SWIPE_MIN = 60;                         // px; a swipe is mostly horizontal
 // A swipe that starts in something that scrolls sideways (a wide table, code) is its own.
 function scrollsSideways(node, stop) {
   const win = stop.ownerDocument.defaultView;
@@ -3708,7 +3719,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.22.4';
+const APP_VERSION = '2026.11.23.1';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
