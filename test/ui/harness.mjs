@@ -89,6 +89,8 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 //          versionServer { version, url, fail } (getVersion; default: the page's own version),
 //          reviewLog { columns, rows }, weightsHistory [..], saveSettings (patch, meta) => reply,
 //          forecast [..], newLimit { limit, introduced, remaining } (both sent with bootstrap),
+//          upcoming { waiting: [ISO..], nextDue: ISO } | () => that (sent with bootstrap; read
+//          on every call, so a test can change it; absent: like an older server),
 //          activity { today, days } | Error (getActivity)
 //          horizonCards [..] | Error (getHorizonCards), applyHorizon (changes) => reply
 //          recallRows [..] | Error (getRecallRows)
@@ -100,7 +102,7 @@ export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
           versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, newLimit,
-          activity, horizonCards = [], applyHorizon, recallRows = [], aheadCards,
+          upcoming, activity, horizonCards = [], applyHorizon, recallRows = [], aheadCards,
           server = {}, now = NOW } = options;
   let clock;
   const ev = [];                                  // what the "server" saw, in order
@@ -158,7 +160,8 @@ export function boot(options = {}) {
           const n = cards.length;
           srv.bootstrapArgs.push(args);
           ok({ stats: { total: n, due: n, new: n, review: 0 }, cards: clone(),
-            config: typeof config === 'function' ? config() : config, forecast, newLimit });
+            config: typeof config === 'function' ? config() : config, forecast, newLimit,
+            ...(typeof upcoming === 'function' ? upcoming() : upcoming) });
         } else if (fn === 'getDueCards') {
           ev.push('getDueCards');
           srv.dueArgs.push(args);
