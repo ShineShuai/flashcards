@@ -1130,7 +1130,7 @@ if (isMain) {
     assert.equal(res.forecast.length, 30);
     assert.equal(res.forecast.reduce((a, b) => a + b, 0), 1);
     assert.deepEqual(Object.keys(res).sort(),
-      ['cards', 'config', 'forecast', 'newLimit', 'stats']);
+      ['cards', 'config', 'forecast', 'newLimit', 'nextDue', 'stats', 'waiting']);
   });
 
   test('getActivity: reviews per study day of the client; time column only', () => {
@@ -1248,6 +1248,34 @@ if (isMain) {
     assert.equal(env.api.saveSettings({ new_per_day: null }).ok, true);
   });
 
+  test('upcoming: sub-day cards not due yet, soonest first; nextDue = earliest of all', () => {
+    const env = fixture();
+    const now = Date.now();
+    const MIN = 60000;
+    env.put(2, { id: 'step10', state: 1, scheduled_days: 10 / 1440, due: iso(now + 10 * MIN) });
+    env.put(3, { id: 'step60', state: 3, scheduled_days: 60 / 1440, due: iso(now + 60 * MIN) });
+    env.put(4, { id: 'due', state: 1, scheduled_days: 10 / 1440, due: iso(now - MIN) });
+    env.put(5, { id: 'day', state: 2, scheduled_days: 1, due: iso(now + 5 * MIN) });
+    env.put(6, { id: 'blank', state: 2, due: iso(now + 3 * DAY) });
+    env.put(7, { id: 'new', state: 0 });
+    env.put(8, { id: 'bad', state: 1, scheduled_days: 0, due: 'not a date' });
+    env.put(9, { id: 'far', state: 1, scheduled_days: 0, due: iso(now + 2 * DAY) });
+    const res = plain(env.api.bootstrap());
+    assert.equal(res.waiting.length, 2, 'day, blank, new, bad and far cards do not wait');
+    const gaps = res.waiting.map((t) => Math.round((Date.parse(t) - now) / MIN));
+    assert.deepEqual(gaps, [10, 60]);
+    assert.equal(Math.round((Date.parse(res.nextDue) - now) / MIN), 5, 'the day card is next');
+    assert.equal(res.stats.due, 3, 'waiting cards are not counted as due');
+  });
+
+  test('upcoming: nothing scheduled ahead gives no waiting card and nextDue null', () => {
+    const env = fixture();
+    env.put(2, { id: 'late', state: 2, due: iso(Date.now() - DAY) });
+    env.put(3, { id: 'new', state: 0 });
+    const res = plain(env.api.bootstrap());
+    assert.deepEqual([res.waiting, res.nextDue], [[], null]);
+  });
+
   test('bootstrap == { getStats(), getDueCards() } from one read', () => {
     const env = fixture();
     const now = Date.now();
@@ -1282,8 +1310,9 @@ if (isMain) {
     const env = fixture();
     const b = env.api.bootstrap();
     const zero = { total: 0, due: 0, new: 0, review: 0 };
-    const { config, forecast, newLimit, ...rest } = JSON.parse(JSON.stringify(b));
+    const { config, forecast, newLimit, waiting, nextDue, ...rest } = JSON.parse(JSON.stringify(b));
     assert.deepEqual(rest, { stats: zero, cards: [] });
+    assert.deepEqual([waiting, nextDue], [[], null]);
     assert.deepEqual(newLimit, { limit: 0, introduced: 0, remaining: 0 });
     assert.deepEqual(forecast, new Array(30).fill(0));
     assert.equal(config.retention, 0.94);
