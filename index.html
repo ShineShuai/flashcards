@@ -1557,11 +1557,11 @@ let sessionStats = { total: 0, again: 0, good: 0 };
 let done         = 0;   // cards finished this session (re-queued cards count once)
 let sessionTotal = 0;   // cards at session start
 let waitTimer    = null;   // done screen and Home: 1 s timer counting down to the next due card
-let homeWaiting  = [];     // Home: due times (ms) of sub-day cards that are not due yet
-let homeNext     = 0;      // Home: earliest future due time (ms) of any card, 0 = none
+let homeSeen     = 0;      // Home: waiting cards due up to this time (ms) are in the Due count
 let homeDue      = 0;      // Home: the Due count on screen
 let homeFetching = false;  // Home: a refresh is under way
 let homeFetchAt  = 0;      // Home: when the last read started
+let homeTries    = 0;      // Home: refreshes in a row that did not show the card that came due
 let audioCtx     = null;   // resume beep; created inside a rating (a user gesture)
 const BASE_TITLE = document.title;
 // A sub-day card (Again / lapse, 10 min step) is queued this many other cards ahead;
@@ -1577,9 +1577,11 @@ let cardShownAt = 0;    // Date.now() when the current card was shown (review du
 let homeCards   = null; // due cards prefetched by bootstrap(); consumed by startSession
 let homeAt      = 0;
 const HOME_CACHE_MS = 5 * 60 * 1000;
-// Home refreshes itself when a card is due. If the server still says "not due" (its clock
-// is behind), or fails, it asks again after this long, doubling on failures up to a minute.
+// Home refreshes itself when a waiting card is due. If the read does not show it yet (the
+// server clock is behind) or fails, it asks again after this long, doubling up to a minute;
+// it gives up on a card after HOME_TRIES_MAX reads.
 const HOME_RETRY_MS = 5000;
+const HOME_TRIES_MAX = 5;
 let homeRetryMs = HOME_RETRY_MS;
 // Fields a review changes; a snapshot of them makes the last rating undoable
 const FSRS_KEYS = [
@@ -1741,26 +1743,24 @@ function showHome() {
   // Read only after pending saves landed, or the stats would still count them as due
   whenSaved(fetchHome, SAVE_WAIT_MS);
 }
-// opts.silent: a refresh while Home is showing (no spinner; dropped when the person has
-// left Home meanwhile). opts.notify: beep and mark the tab title when the Due count grew.
-function fetchHome(opts = {}) {
+// silent: a refresh while Home is showing (no spinner; dropped when the person has left
+// Home meanwhile). It beeps and marks the tab title when the Due count grew.
+function fetchHome(silent) {
+  const readAt = Date.now();
   homeFetching = true;
-  homeFetchAt  = Date.now();
+  homeFetchAt  = readAt;
   google.script.run
     .withSuccessHandler(res => {
       homeFetching = false;
-      if (opts.silent && !isShown('s-home')) {
+      if (silent && !isShown('s-home')) {
         return;
       }
-      homeRetryMs = HOME_RETRY_MS;
       applyConfig(res.config);
       const stats = res.stats;
       const grew  = stats.due > homeDue;
       homeDue   = stats.due;
       homeCards = res.cards;
       homeAt    = Date.now();
-      homeWaiting = timesOf(res.waiting);
-      homeNext    = timesOf([res.nextDue])[0] || 0;
       forecastCounts = Array.isArray(res.forecast) ? res.forecast : null;
       renderForecast();
       document.getElementById('stat-due').textContent   = stats.due;
@@ -1770,14 +1770,21 @@ function fetchHome(opts = {}) {
       const btn = document.getElementById('startBtn');
       btn.textContent = stats.due > 0 ? `▶  Start Review (${stats.due})` : '✓  Nothing due';
       btn.disabled    = stats.due === 0;
+      // A read counts the waiting cards that were due when it began. After a refresh that
+      // shows none of them, keep them and ask again later (the server clock may be behind).
+      if (!silent || grew || ++homeTries >= HOME_TRIES_MAX) {
+        homeSeen    = readAt;
+        homeTries   = 0;
+        homeRetryMs = HOME_RETRY_MS;
+      } else {
+        homeRetryMs = Math.min(homeRetryMs * 2, 60000);
+      }
       show('s-home');
       startHomeWatch();
-      if (opts.silent) {
-        if (opts.notify && grew) {
-          notifyResume();
-        }
-      } else {
+      if (!silent) {
         loadActivity();
+      } else if (grew) {
+        notifyResume();
       }
       if (newerVersion) {
         updateIfIdle();            // a newer deployment was seen during the session
@@ -1787,7 +1794,7 @@ function fetchHome(opts = {}) {
     })
     .withFailureHandler(err => {
       homeFetching = false;
-      if (opts.silent) {
+      if (silent) {
         homeRetryMs = Math.min(homeRetryMs * 2, 60000);   // stay quiet, ask again later
         return;
       }
@@ -1796,37 +1803,32 @@ function fetchHome(opts = {}) {
     })
     .bootstrap(clientOffsetMin());
 }
-// ISO strings -> ms; anything that is not a date is dropped (an older server sends none).
-function timesOf(list) {
-  return (Array.isArray(list) ? list : []).map(t => Date.parse(t)).filter(ms => isFinite(ms));
-}
 
-// Home watches the clock like the done screen does: it counts down to the next sub-day
-// card and, once any card is due, reads the counts again by itself (no reload, no screen
-// change). A study-day rollover refreshes silently; only a sub-day card, the case the
-// done screen announces, also beeps and marks a background tab. Leaving Home stops it.
-function nextHomeDue() {
-  const times = homeWaiting.concat(homeNext ? [homeNext] : []);
-  return times.length ? Math.min(...times) : 0;
+// Home counts down like the done screen, and only when the done screen would: to the
+// waiting cards the finished session still holds in `deck`. When one is due it reads the
+// counts again by itself (no reload, no screen change) and beeps; it does not start the
+// review. A card that comes due otherwise (04:00 rollover, another device) is not watched.
+function homeDues() {
+  return deck.slice(idx).map(c => Date.parse(c.due)).filter(ms => ms > homeSeen);
 }
 function renderHomeWait() {
-  const el = document.getElementById('home-wait');
-  el.classList.toggle('hidden', !homeWaiting.length);
-  if (homeWaiting.length) {
-    el.textContent = waitText(homeWaiting, 'Updates by itself.');
+  const dues = homeDues();
+  const el   = document.getElementById('home-wait');
+  el.classList.toggle('hidden', !dues.length);
+  if (dues.length) {
+    el.textContent = waitText(dues, 'Updates by itself.');
   }
 }
 function startHomeWatch() {
   stopWait();
   renderHomeWait();
-  if (nextHomeDue()) {
+  if (homeDues().length) {
     waitTimer = setInterval(homeTick, 1000);
   }
 }
 function homeTick() {
   renderHomeWait();
-  const due = nextHomeDue();
-  if (due && Date.now() >= due) {
+  if (Date.now() >= Math.min(...homeDues())) {
     refreshHome();
   }
 }
@@ -1837,8 +1839,7 @@ function refreshHome() {
   }
   homeFetching = true;   // until the read answers: one request at a time
   homeFetchAt  = now;
-  const notify = homeWaiting.some(ms => ms <= now);
-  whenSaved(() => fetchHome({ silent: true, notify: notify }), SAVE_WAIT_MS);
+  whenSaved(() => fetchHome(true), SAVE_WAIT_MS);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4308,7 +4309,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.24.1';
+const APP_VERSION = '2026.11.24.2';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop

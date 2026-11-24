@@ -292,38 +292,12 @@ function bootstrap(offsetMin) {
   const offsetMs = offsetMsOf_(offsetMin);
   const config   = getConfig_();
   const view     = dueView_(cards, now, offsetMs, config);
-  const upcoming = upcomingFrom_(cards, now);
   return {
     stats:    view.stats,
     cards:    view.cards,
     newLimit: view.newLimit,
     forecast: forecastFrom_(cards, now, offsetMs),
-    waiting:  upcoming.waiting,
-    nextDue:  upcoming.nextDue,
     config:   config
-  };
-}
-
-// What comes due next, for the home countdown. waiting: due times (ISO, soonest first)
-// of sub-day cards (a learning step: scheduled_days < 1, due within a day) that are not
-// due yet; the same cards the review session holds back (see requeue() in index.html).
-// nextDue: the earliest future due time of any card, or null; the home screen refreshes
-// its counts then.
-function upcomingFrom_(cards, now) {
-  const nowMs   = now.getTime();
-  const waiting = [];
-  let next = Infinity;
-  cards.forEach(c => {
-    if (!c.due) return;
-    const ms = new Date(c.due).getTime();
-    if (!(ms > nowMs)) return;   // due already, or not a date
-    next = Math.min(next, ms);
-    if (Number(c.scheduled_days) < 1 && ms - nowMs < 86400000) waiting.push(ms);
-  });
-  waiting.sort((a, b) => a - b);
-  return {
-    waiting: waiting.map(ms => new Date(ms).toISOString()),
-    nextDue: isFinite(next) ? new Date(next).toISOString() : null
   };
 }
 

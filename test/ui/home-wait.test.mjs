@@ -1,7 +1,8 @@
 // Run: node test/ui/home-wait.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
-// Home watches the clock: countdown to sub-day cards, silent refresh when a card is due.
+// Home counts down like the done screen, and only when it would: to the waiting cards the
+// finished session holds in `deck`. When one is due it refreshes the counts by itself.
 import assert from 'node:assert/strict';
-import { boot, card, NOW, sleep, until } from './harness.mjs';
+import { boot, card, sleep, until } from './harness.mjs';
 
 let failed = 0;
 async function test(name, fn) {
@@ -15,11 +16,13 @@ async function test(name, fn) {
 }
 
 const MIN = 60000;
-const iso = (ms) => new Date(ms).toISOString();
-const inMin = (n) => iso(NOW.getTime() + n * MIN);
-const TEN = /^Next: 1 card in (10:00|9:5\d)\. Updates by itself\.$/;
+const TWO = /^Next: 2 cards in (10:00|9:5\d)\. Updates by itself\.$/;
+const bootstraps = (env) => env.ev.filter((e) => e === 'bootstrap').length;
+const tap = (w) => w.document.dispatchEvent(new w.Event('pointerdown'));
+const hide = (w, hidden) =>
+  Object.defineProperty(w.document, 'hidden', { configurable: true, value: hidden });
 
-// An AudioContext that records its oscillators; `log.created` counts the contexts made.
+// An AudioContext that records its oscillators.
 function stubAudio(w) {
   const log = { created: 0, osc: [] };
   w.AudioContext = class {
@@ -42,131 +45,145 @@ function stubAudio(w) {
   };
   return log;
 }
-const tap = (w) => w.document.dispatchEvent(new w.Event('pointerdown'));
-const hide = (w, hidden) => Object.defineProperty(w.document, 'hidden', { configurable: true, value: hidden });
-const home = async (options) => {
-  const env = boot(options);
+
+// Two cards: c1 Again (10 min), c2 Good on a new card (1 h): the session ends on the done
+// screen with two waiting cards. `cards` is what the server will report as due: emptied here.
+async function doneWithTwoWaiting(options = {}) {
+  const cards = [card('1'), card('2')];
+  const env = boot({ cards, ...options });
+  await env.start();
+  cards.length = 0;
+  env.w.flipCard();
+  env.w.rate(1);
+  await sleep(5);
+  env.w.flipCard();
+  env.w.rate(3);
+  await sleep(5);
+  assert.ok(env.shown('s-complete'));
+  assert.match(env.txt('cs-sub'), /^Next: 2 cards in (10:00|9:5\d)\. Resumes by itself\.$/);
+  return { env, cards };
+}
+async function goHome(env) {
+  env.w.showHome();
   await until(() => env.shown('s-home'));
   await sleep(5);
-  return env;
-};
-const bootstraps = (env) => env.ev.filter((e) => e === 'bootstrap').length;
+}
 
-await test('countdown on Home only while sub-day cards wait; it ticks', async () => {
-  const env = await home({ cards: [], upcoming: { waiting: [inMin(10)], nextDue: inMin(10) } });
+await test('Home shows the done-screen countdown, and only then', async () => {
+  const { env } = await doneWithTwoWaiting();
+  await goHome(env);
   assert.equal(env.shown('home-wait'), true);
-  assert.match(env.txt('home-wait'), TEN);
+  assert.match(env.txt('home-wait'), TWO);
   assert.equal(env.$('startBtn').disabled, true);
   assert.equal(env.txt('startBtn').trim(), '✓  Nothing due');
   env.clock.advance(61 * 1000);
   await until(() => /in 8:5\d\./.test(env.txt('home-wait')), 3000);
+  await goHome(env);                                   // Home again: the deck still holds them
+  assert.equal(env.shown('home-wait'), true);
 
-  const rollover = await home({ cards: [], upcoming: { waiting: [], nextDue: inMin(24 * 60) } });
-  assert.equal(rollover.shown('home-wait'), false, 'a card due tomorrow is no countdown');
-  assert.notEqual(rollover.w.eval('waitTimer'), null, 'but Home still watches for it');
+  const all = boot({ cards: [card('1')] });            // nothing waits: "All done!"
+  await all.start();
+  all.w.flipCard();
+  all.w.rate(4);
+  await sleep(5);
+  assert.equal(all.txt('cs-title'), 'All done!');
+  await goHome(all);
+  assert.equal(all.shown('home-wait'), false);
+  assert.equal(all.w.eval('waitTimer'), null);
 
-  const older = await home({ cards: [] });   // a server without the new fields
-  assert.equal(older.shown('home-wait'), false);
-  assert.equal(older.w.eval('waitTimer'), null, 'nothing to watch');
+  const cold = boot({ cards: [card('1')] });           // a fresh page: no session, no countdown
+  await until(() => cold.shown('s-home'));
+  assert.equal(cold.shown('home-wait'), false);
+  assert.equal(cold.w.eval('waitTimer'), null);
 });
 
-await test('a sub-day card comes due: count, button, beep and title update by themselves', async () => {
-  const cards = [];
-  let up = { waiting: [inMin(10)], nextDue: inMin(10) };
-  const env = await home({ cards, upcoming: () => up });
+await test('card due: Due, button, beep and title update by themselves', async () => {
+  const { env, cards } = await doneWithTwoWaiting();
   const log = stubAudio(env.w);
   const base = env.w.document.title;
-  tap(env.w);                                  // the gesture that unlocks the audio
+  tap(env.w);                                          // the gesture that unlocks the audio
   assert.equal(log.created, 1);
+  await goHome(env);
+  assert.equal(env.txt('stat-due'), '0');
   hide(env.w, true);
-  assert.equal(bootstraps(env), 1);
+  const reads = bootstraps(env);
 
-  cards.push(card('1'));                       // what the server will now report as due
-  up = { waiting: [], nextDue: null };
+  cards.push(card('1'));                               // the server now reports c1 as due
   env.clock.advance(10 * MIN + 1000);
   await until(() => env.txt('stat-due') === '1', 3500);
   assert.equal(env.shown('s-home'), true, 'no spinner, no screen change');
-  assert.equal(bootstraps(env), 2);
+  assert.equal(bootstraps(env), reads + 1);
   assert.equal(env.txt('startBtn').trim(), '▶  Start Review (1)');
   assert.equal(env.$('startBtn').disabled, false);
-  assert.equal(env.shown('home-wait'), false);
-  assert.equal(env.w.eval('waitTimer'), null, 'nothing left to watch');
+  assert.match(env.txt('home-wait'), /^Next: 1 card in (49:5\d|50:00)\. Updates by itself\.$/,
+    'the 1 h card keeps counting');
   assert.equal(log.osc.map((o) => o.frequency.value).join(), '660,880', 'two-tone beep');
   assert.equal(env.w.document.title, '● Card due · ' + base);
 
   hide(env.w, false);
   env.w.document.dispatchEvent(new env.w.Event('visibilitychange'));
   assert.equal(env.w.document.title, base);
-  env.w.startSession();                        // the refreshed cards are used, no second read
+  env.w.startSession();                                // the refreshed cards, no second read
   assert.equal(env.shown('s-session'), true);
   assert.equal(env.txt('card-title'), 'T1');
   assert.equal(env.ev.includes('getDueCards'), false);
+  assert.equal(env.w.eval('waitTimer'), null, 'leaving Home stops the watch');
 });
 
-await test('study-day rollover: the counts refresh silently, no beep, title untouched', async () => {
-  const cards = [];
-  let up = { waiting: [], nextDue: inMin(24 * 60) };
-  const env = await home({ cards, upcoming: () => up });
+await test('server clock behind: asks again, then heals', async () => {
+  const { env, cards } = await doneWithTwoWaiting();
   const log = stubAudio(env.w);
-  const base = env.w.document.title;
   tap(env.w);
-  hide(env.w, true);
-  cards.push(card('1'), card('2'));
-  up = { waiting: [], nextDue: null };
-  env.clock.advance(24 * 60 * MIN + 1000);
-  await until(() => env.txt('stat-due') === '2', 3500);
-  assert.equal(log.osc.length, 0);
-  assert.equal(env.w.document.title, base);
-  assert.equal(env.w.eval('waitTimer'), null);
-});
+  await goHome(env);
+  const reads = bootstraps(env);
 
-await test('the server clock is behind: one read per retry period, not a loop', async () => {
-  const stale = iso(NOW.getTime() - 1000);
-  const env = await home({ cards: [], upcoming: { waiting: [stale], nextDue: stale } });
+  env.clock.advance(10 * MIN + 1000);                  // c1 is due here; the server says no
+  await until(() => bootstraps(env) === reads + 1, 3500);
+  await sleep(50);
+  assert.equal(env.txt('stat-due'), '0');
+  assert.equal(log.osc.length, 0, 'no beep for a count that did not grow');
+  assert.match(env.txt('home-wait'), /^Next: 2 cards in 0:00\./, 'the card is still waited for');
   await sleep(2500);
-  assert.equal(bootstraps(env), 1, 'retry waits for the period');
-  env.clock.advance(6000);
-  await until(() => bootstraps(env) === 2, 3000);
+  assert.equal(bootstraps(env), reads + 1, 'the second try waits (10 s), no loop');
+
+  cards.push(card('1'));                               // now the server agrees
+  env.clock.advance(11 * 1000);
+  await until(() => env.txt('stat-due') === '1', 3500);
+  assert.equal(bootstraps(env), reads + 2);
+  assert.equal(log.osc.length, 2, 'beep once the count grew');
+  assert.match(env.txt('home-wait'), /^Next: 1 card in /);
+});
+
+await test('it gives up on a card after the allowed number of reads', async () => {
+  const { env } = await doneWithTwoWaiting();
+  await goHome(env);
+  const reads = bootstraps(env);
+  env.clock.advance(10 * MIN + 1000);
+  for (let n = 1; n <= 5; n++) {
+    await until(() => bootstraps(env) === reads + n, 3500);
+    await sleep(20);
+    env.clock.advance(61 * 1000);                      // past any retry wait
+  }
+  assert.match(env.txt('home-wait'), /^Next: 1 card in /, 'only the 1 h card is left');
+  const before = bootstraps(env);
   await sleep(1500);
-  assert.equal(bootstraps(env), 2, 'and waits again');
+  assert.equal(bootstraps(env), before);
 });
 
-await test('leaving Home stops the watch; a late refresh does not pull the person back', async () => {
-  const env = await home({ cards: [card('1')], upcoming: { waiting: [inMin(10)], nextDue: inMin(10) } });
+await test('late refresh does not pull back; leaving Home stops the watch', async () => {
+  const { env } = await doneWithTwoWaiting();
+  await goHome(env);
   assert.notEqual(env.w.eval('waitTimer'), null);
-  env.w.eval('fetchHome({ silent: true })');   // a refresh is in flight...
-  env.w.startSession();                        // ...when the person starts reviewing
+  env.w.show('s-weights');
   assert.equal(env.w.eval('waitTimer'), null);
+
+  const fresh = boot({ cards: [card('1')] });
+  await until(() => fresh.shown('s-home'));
+  fresh.w.eval('fetchHome(true)');                     // a refresh is in flight...
+  fresh.w.startSession();                              // ...when the person starts reviewing
   await sleep(30);
-  assert.equal(env.shown('s-session'), true, 'the answer is dropped');
-  assert.equal(env.w.eval('homeFetching'), false);
-});
-
-await test('done screen and Home agree: both count down, or neither does', async () => {
-  let env;
-  const dues = () => env.saved.filter((x) => x.fsrs.scheduled_days < 1).map((x) => x.fsrs.due).sort();
-  env = boot({ cards: [card('1'), card('2')], upcoming: () => ({ waiting: dues() }) });
-  await env.start();
-  env.w.flipCard();
-  env.w.rate(1);                               // Again: 10 min
-  await sleep(5);
-  env.w.flipCard();
-  env.w.rate(3);                               // Good on a new card: 1 h
-  await sleep(5);
-  assert.match(env.txt('cs-sub'), /^Next: 2 cards in (10:00|9:5\d)\. Resumes by itself\.$/);
-  env.w.showHome();
-  await until(() => env.shown('s-home'));
-  assert.match(env.txt('home-wait'), /^Next: 2 cards in (10:00|9:5\d)\. Updates by itself\.$/);
-
-  env = boot({ cards: [card('1')], upcoming: () => ({ waiting: dues() }) });
-  await env.start();
-  env.w.flipCard();
-  env.w.rate(4);                               // Easy: graduates, nothing waits
-  await sleep(5);
-  assert.equal(env.txt('cs-title'), 'All done!');
-  env.w.showHome();
-  await until(() => env.shown('s-home'));
-  assert.equal(env.shown('home-wait'), false);
+  assert.equal(fresh.shown('s-session'), true, 'the answer is dropped');
+  assert.equal(fresh.w.eval('homeFetching'), false);
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');
