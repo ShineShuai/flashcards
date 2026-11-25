@@ -64,7 +64,7 @@ jobs:
             FC_NOW=2026-11-23T02:30:00 node "$f"
           done
 
-  # Real Chromium: five rating buttons in one row, tap targets, no scrolling; the picture viewer
+  # Real Chromium: five rating buttons in one row, tap targets, no scrolling; the picture viewer, the pages of a long answer
   layout:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -77,6 +77,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: node test/layout.mjs
       - run: node test/viewer.mjs
+      - run: node test/long-answer.mjs
 
   # The pinned marked and DOMPurify <script> integrity hashes vs their npm packages (needs network)
   integrity:

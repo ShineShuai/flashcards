@@ -390,6 +390,13 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   letter-spacing: .09em; color: var(--text2); margin-bottom: 14px;
   display: flex; align-items: center; justify-content: space-between;
 }
+.card-meta-end { display: flex; align-items: center; gap: 8px; }
+.card-icon-btn {
+  min-width: 36px; min-height: 36px; font: inherit; font-size: 1rem; line-height: 1; cursor: pointer;
+  border-radius: 10px; border: 1px solid var(--border); color: var(--text2); background: var(--bg2);
+}
+.card-icon-btn[hidden] { display: none; }
+.card-icon-btn:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 .card-meta-tag {
   background: linear-gradient(135deg, var(--purple), var(--pink));
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
@@ -475,10 +482,17 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .back-note { font-size: .75rem; color: var(--text2); margin-bottom: 8px; }
 .back-content img  { max-width:100%; border-radius:12px; margin:8px 0; display:block; }
 /* tabs: <!--tab--> lines in back_content (see splitTabs) */
-.fc-tabbar {
-  display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px;
-  position: sticky; top: 0; z-index: 1; background: var(--surface); scrollbar-width: thin;
+.fc-barrow {
+  display: flex; align-items: flex-start; gap: 6px; padding: 2px 0 8px;
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
 }
+.fc-tabbar { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: thin; }
+.fc-extra {
+  flex: none; min-height: 36px; padding: 6px 12px; font: inherit; font-size: .8rem;
+  font-weight: 700; line-height: 1.2; border-radius: 999px; cursor: pointer;
+  border: 1px dashed var(--border); color: var(--text2); background: transparent;
+}
+.fc-extra:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 .fc-tab {
   flex: 0 0 auto; max-width: 14em; min-height: 36px; padding: 6px 14px;
   font: inherit; font-size: .8rem; font-weight: 700; line-height: 1.2;
@@ -487,6 +501,7 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fc-tab[aria-selected="true"] { color: var(--purple-t); background: var(--surface); border-color: var(--purple); }
+.fc-tab[aria-current="true"] { color: var(--purple-t); background: var(--surface); border-color: var(--purple); }
 .fc-tab:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
 .fc-tabpanel[hidden] { display: none; }
 /* more answer below: fade its bottom edge (class set by updateScrollHint) */
@@ -625,6 +640,26 @@ body.viewer-open { overflow: hidden; }
 }
 .viewer-caption { flex: none; text-align: center; font-size: .82rem; padding: 6px 12px 10px; opacity: .85; }
 .viewer-caption:empty { display: none; }
+/* ── Full-screen answer ── */
+body.reader-open { overflow: hidden; }
+#reader {
+  position: fixed; inset: 0; z-index: 550; display: flex; flex-direction: column;
+  background: var(--bg); outline: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+           env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+.reader-bar {
+  flex: none; min-height: 52px; padding: 0 12px 0 16px; display: flex; align-items: center;
+  justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border);
+  font-weight: 700; font-size: .9rem;
+}
+.reader-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-btn {
+  flex: none; min-width: 44px; min-height: 44px; padding: 0 14px; font: inherit; font-weight: 700;
+  cursor: pointer; border-radius: 12px; border: 1px solid var(--border); color: var(--text); background: var(--bg2);
+}
+.reader-btn:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.reader-body { flex: 1; min-height: 0; width: 100%; max-width: 920px; margin: 0 auto; padding: 14px 16px 32px; }
 #docs-modal {
   position: fixed; inset: 0; z-index: 500; display: flex; flex-direction: column;
   background: var(--bg);
@@ -794,7 +829,11 @@ body.viewer-open { overflow: hidden; }
           <button class="btn btn-flip" onclick="unflipCard()">
             ← Hints<kbd class="k">Esc</kbd>
           </button>
-          <span id="back-type-badge" class="card-meta-tag">text</span>
+          <span class="card-meta-end">
+            <span id="back-type-badge" class="card-meta-tag">text</span>
+            <button class="card-icon-btn" id="btn-expand" onclick="openReader()" hidden
+              aria-label="Show the answer full screen" title="Full screen (E)">⤢</button>
+          </span>
         </div>
         <div class="back-content" id="back-content"></div>
         <div class="recall-strip" role="group" aria-label="Recall status"></div>
@@ -975,6 +1014,14 @@ body.viewer-open { overflow: hidden; }
   </div>
   <div class="viewer-stage" id="viewer-stage"><div class="viewer-canvas" id="viewer-canvas"></div></div>
   <div class="viewer-caption" id="viewer-caption"></div>
+</div>
+
+<div id="reader" class="hidden" role="dialog" aria-modal="true" aria-label="Answer, full screen" tabindex="-1">
+  <div class="reader-bar">
+    <span class="reader-title" id="reader-title"></span>
+    <button class="reader-btn" onclick="closeReader()" aria-label="Close full screen">✕<kbd class="k">Esc</kbd></button>
+  </div>
+  <div class="back-content reader-body zoomable" id="reader-body"></div>
 </div>
 
 <div class="save-status" id="save-status" role="status" aria-live="polite"></div>
@@ -2001,20 +2048,29 @@ function renderFront() {
 
 // ── Back ───────────────────────────────────────────────────────────────────
 function renderBack(card) {
-  const type    = String(card.back_type || 'text').toLowerCase().trim();
-  const content = String(card.back_content || '');
+  const st = backState;
+  st.card = card;
+  st.type = String(card.back_type || 'text').toLowerCase().trim();
+  st.content = String(card.back_content || '');
+  st.token++;
+  st.plan = null;
+  st.area = null;
   const badge = document.getElementById('back-type-badge');
   const stage = document.getElementById('back-content');
   viewerClose();
-  badge.textContent = type;
-  mountBack(stage, content, type);
+  closeReader();
+  badge.textContent = st.type;
+  mountBack(stage, st.content, st.type);
   wireViewer(stage);
+  wireAuto(stage);
   watchScrollHint(stage);
   const tabbed = stage.firstElementChild && stage.firstElementChild.fcTabs;
+  st.authored = !!tabbed;
   if (tabbed) {
-    badge.textContent = type + ' · ' + tabbed.tabs.length + ' tabs';
+    badge.textContent = st.type + ' · ' + tabbed.tabs.length + ' tabs';
   } else {
     watchLiveFrames(stage);
+    autoPresent(stage);
   }
 }
 // Called for every tab when it is mounted (mountBack shares the sheet preview, which has
@@ -2245,8 +2301,9 @@ function scrollsSideways(node, stop) {
   }
   return false;
 }
-// A tab is mounted when first shown. A live tab is unmounted when left (and mounted anew
-// when shown again), so its sound and scripts stop with it.
+// A tab is mounted when first shown: from its source (`content`, `type`), or by its own
+// `mount(panel)` where the caller has nodes. A live tab is unmounted when left (and mounted
+// anew when shown again), so its sound and scripts stop with it.
 function selectTab(root, i, focus) {
   const st = root && root.fcTabs;
   if (!st) {
@@ -2265,7 +2322,12 @@ function selectTab(root, i, focus) {
     });
     const panel = st.panels[to];
     if (!panel.hasChildNodes()) {
-      mountOne(panel, st.tabs[to].content, st.tabs[to].type);
+      const tab = st.tabs[to];
+      if (typeof tab.mount === 'function') {
+        tab.mount(panel);
+      } else {
+        mountOne(panel, tab.content, tab.type);
+      }
       if (typeof onTabMounted === 'function') {
         onTabMounted(panel);
       }
@@ -2289,7 +2351,8 @@ function tabsStep(el, by) {
   return !!root && !!root.fcTabs && selectTab(root, root.fcTabs.current + by);
 }
 let tabSeq = 0;
-function mountTabs(el, tabs) {
+// `extras`: {label, title, onClick} buttons after the tabs, not part of the tab list.
+function mountTabs(el, tabs, extras) {
   const doc = el.ownerDocument;
   const make = (tag, className) => {
     const node = doc.createElement(tag);
@@ -2298,6 +2361,7 @@ function mountTabs(el, tabs) {
   };
   const seq = ++tabSeq;
   const root = make('div', 'fc-tabs');
+  const row = make('div', 'fc-barrow');
   const bar = make('div', 'fc-tabbar');
   const body = make('div', 'fc-tabbody');
   bar.setAttribute('role', 'tablist');
@@ -2351,8 +2415,20 @@ function mountTabs(el, tabs) {
       selectTab(root, st.current + (dx < 0 ? 1 : -1));
     }
   }, { passive: true });
+  row.appendChild(bar);
+  (extras || []).forEach(extra => {
+    const button = make('button', 'fc-extra');
+    button.type = 'button';
+    button.textContent = extra.label;
+    if (extra.title) {
+      button.title = extra.title;
+      button.setAttribute('aria-label', extra.title);
+    }
+    button.addEventListener('click', extra.onClick);
+    row.appendChild(button);
+  });
   root.fcTabs = st;
-  root.append(bar, body);
+  root.append(row, body);
   el.replaceChildren(root);
   selectTab(root, 0);
 }
@@ -2855,6 +2931,9 @@ function sessionKey(key, mod, onButton) {
     if (key === 'v') {
       return viewerOpenFirst();
     }
+    if (key === 'e') {
+      return openReader();
+    }
     return false;
   }
   if ((key === ' ' || key === 'Enter') && !onButton) {
@@ -2900,6 +2979,10 @@ function onKeyDown(e) {
     viewerKey(e, key);
     return;
   }
+  if (isShown('reader')) {                       // the same for the full-screen answer
+    readerKey(e, key);
+    return;
+  }
   const mod = e.ctrlKey || e.metaKey;
   // Space/Enter on a focused button keep their native meaning (click)
   const onButton = !!(el.closest && el.closest('button, a'));
@@ -2935,11 +3018,426 @@ document.addEventListener('click', e => {
   }
 });
 
+// ── Long answers ───────────────────────────────────────────────────────────
+// A long html or md answer without author tabs is shown in pages, split at its own headings
+// (or <section>s), each page about as tall as the card: no markers, nothing about the cell
+// syntax. Up to AUTO_MIN_RATIO card heights it just scrolls (with the fade). Beyond that, with
+// at least AUTO_MIN_SECTIONS sections, it becomes pages, or, in "All" mode, one answer with a
+// bar of section links. Expand (E) shows the whole answer full screen either way. The cell is
+// never changed: the pages are copies of the rendered nodes.
+const AUTO_MIN_RATIO = 1.3;
+const AUTO_MIN_SECTIONS = 3;
+const AUTO_BAR_PX = 46;              // the row of tabs above a page
+const AUTO_SLACK_PX = 6;             // a page may run this far over before it is split
+const AUTO_LABEL_MAX = 28;
+const AUTO_IMAGE_WAIT_MS = 1500;     // wait for pictures this long before measuring
+const AUTO_RESIZE_MS = 250;
+const AUTO_RESIZE_RATIO = 0.15;     // the card's height may change this much before pages are planned again
+const PAGES_KEY = 'flash.pages';     // 'pages' (default) or 'all'; per device
+const AUTO_WRAPPERS = /^(DIV|SECTION|ARTICLE|MAIN)$/;
+const AUTO_ASIDE = /^(STYLE|SCRIPT|LINK)$/;
+const backState = { card: null, content: '', type: '', authored: false, token: 0, plan: null,
+  area: null };
+
+// Where the blocks of a rendered answer are: the container (the stage, or a styled card's
+// .fc-root with its <style> blocks), the wrappers that hold nothing else (third-party content
+// is often one big <div style>), and the root whose children are the blocks.
+function autoRoot(stage) {
+  const host = stage.firstElementChild;
+  const styled = !!host && host.classList.contains('fc-styled');
+  const container = styled ? host.shadowRoot && host.shadowRoot.querySelector('.fc-root') : stage;
+  if (!container) {
+    return null;
+  }
+  const chain = [];
+  let root = container;
+  for (;;) {
+    const blocks = Array.from(root.children).filter(n => !AUTO_ASIDE.test(n.tagName));
+    const text = Array.from(root.childNodes).some(n => n.nodeType === 3 && n.textContent.trim());
+    if (blocks.length !== 1 || text || !AUTO_WRAPPERS.test(blocks[0].tagName)) {
+      break;
+    }
+    chain.push(blocks[0]);
+    root = blocks[0];
+  }
+  // a <style> or <link> inside a wrapper would be lost in the copies: no pages then
+  if (chain.some(w => Array.from(w.children).some(n => AUTO_ASIDE.test(n.tagName)))) {
+    return null;
+  }
+  const styles = styled ? Array.from(container.children).filter(n => AUTO_ASIDE.test(n.tagName)) : [];
+  return { styled, container, chain, root, styles };
+}
+function autoLabel(block, i) {
+  const heading = /^H[1-6]$/.test(block.tagName) ? block : block.querySelector('h1, h2, h3, h4, h5, h6');
+  const text = (heading ? heading.textContent : '').replace(/\s+/g, ' ').trim();
+  if (!text) {
+    return i === 0 ? 'Intro' : String(i + 1);
+  }
+  return text.length > AUTO_LABEL_MAX ? text.slice(0, AUTO_LABEL_MAX - 1) + '…' : text;
+}
+// The sections of `root`: where they start among its blocks. <section> / <article> blocks
+// when there are at least two of them, else the most frequent heading level among h1-h3
+// (at least two). Whatever comes before the first one is a section of its own.
+function autoSections(root) {
+  const blocks = Array.from(root.children);
+  const level = n => (/^H[1-3]$/.test(n.tagName) ? Number(n.tagName[1]) : 0);
+  const counts = {};
+  blocks.forEach(n => {
+    if (level(n)) {
+      counts[level(n)] = (counts[level(n)] || 0) + 1;
+    }
+  });
+  const best = Object.keys(counts).map(Number).sort((a, b) => counts[b] - counts[a] || a - b)[0];
+  const sections = blocks.map((n, i) => (/^(SECTION|ARTICLE)$/.test(n.tagName) ? i : -1)).filter(i => i >= 0);
+  let starts;
+  if (sections.length >= 2 && sections.length >= (counts[best] || 0)) {
+    starts = sections;
+  } else if (best && counts[best] >= 2) {
+    starts = blocks.map((n, i) => (level(n) === best ? i : -1)).filter(i => i >= 0);
+  } else {
+    return null;
+  }
+  if (starts[0] !== 0) {
+    starts.unshift(0);
+  }
+  return { blocks, starts, labels: starts.map((at, i) => autoLabel(blocks[at], i)) };
+}
+// How tall each section is as laid out now (its first block to the next section's), and what a
+// page gains or loses at its ends: the top margin of its first block, and its last block's own
+// bottom margin instead of the gap to the next section.
+function autoMeasure(blocks, starts) {
+  const rect = n => n.getBoundingClientRect();
+  const margin = (n, side) => parseFloat(getComputedStyle(n)[side]) || 0;
+  const end = rect(blocks[blocks.length - 1]).bottom + margin(blocks[blocks.length - 1], 'marginBottom');
+  const height = [];
+  const lead = [];
+  const tail = [];
+  starts.forEach((at, i) => {
+    const more = i + 1 < starts.length;
+    const last = blocks[(more ? starts[i + 1] : blocks.length) - 1];
+    const next = more ? rect(blocks[starts[i + 1]]).top : end;
+    height.push(next - rect(blocks[at]).top);
+    lead.push(margin(blocks[at], 'marginTop'));
+    tail.push(more ? margin(last, 'marginBottom') - (next - rect(last).bottom) : 0);
+  });
+  return { height, lead, tail };
+}
+// Vertical padding and border of what every page is wrapped in again.
+function autoChrome(info) {
+  const box = n => {
+    const c = getComputedStyle(n);
+    return ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth']
+      .reduce((sum, key) => sum + (parseFloat(c[key]) || 0), 0);
+  };
+  return (info.styled ? box(info.container) : 0) + info.chain.reduce((sum, n) => sum + box(n), 0);
+}
+// In order, as many sections to a page as fit; a section taller than a page has one to itself.
+// `lead[i]` / `tail[i]`: what a page gains when it starts / loses when it ends with section i.
+function packPages(heights, capacity, lead, tail) {
+  const pages = [];
+  let page = [];
+  let used = 0;
+  heights.forEach((h, i) => {
+    const first = page.length ? page[0] : i;
+    const cost = used + h + (lead ? lead[first] || 0 : 0) + (tail ? tail[i] || 0 : 0);
+    if (page.length && cost > capacity) {
+      pages.push(page);
+      page = [];
+      used = 0;
+    }
+    page.push(i);
+    used += h;
+  });
+  if (page.length) {
+    pages.push(page);
+  }
+  return pages;
+}
+// null unless the answer in `stage` is long enough, laid out, and has the structure.
+function planAutoPages(stage) {
+  const area = stage.clientHeight;
+  if (area < 50 || stage.clientWidth < 50 || stage.scrollHeight <= area * AUTO_MIN_RATIO) {
+    return null;
+  }
+  const info = autoRoot(stage);
+  const secs = info && autoSections(info.root);
+  if (!secs || secs.starts.length < AUTO_MIN_SECTIONS) {
+    return null;
+  }
+  const m = autoMeasure(secs.blocks, secs.starts);
+  const pages = packPages(m.height, area - AUTO_BAR_PX - autoChrome(info) + AUTO_SLACK_PX, m.lead, m.tail);
+  return pages.length < 2 ? null : { info, secs, heights: m.height, pages };
+}
+// Mounts page i: copies of its blocks inside copies of the wrappers (and, for a styled card,
+// a shadow root with the same <style> blocks).
+function autoPageMount(plan, i) {
+  return panel => {
+    const { info, secs, pages } = plan;
+    const last = pages[i][pages[i].length - 1];
+    const to = last + 1 < secs.starts.length ? secs.starts[last + 1] : secs.blocks.length;
+    let node = document.createDocumentFragment();
+    secs.blocks.slice(secs.starts[pages[i][0]], to).forEach(b => node.appendChild(b.cloneNode(true)));
+    for (let k = info.chain.length - 1; k >= 0; k--) {
+      const shell = info.chain[k].cloneNode(false);
+      shell.appendChild(node);
+      node = shell;
+    }
+    if (!info.styled) {
+      noteBrokenImages(panel);
+      panel.replaceChildren(node);
+      return;
+    }
+    const host = document.createElement('div');
+    host.className = 'fc-styled';
+    const shadow = host.attachShadow({ mode: 'open' });
+    noteBrokenImages(shadow);
+    shadow.innerHTML = '<style>' + STYLED_BASE + '</style><div class="fc-root"></div>';
+    const root = shadow.querySelector('.fc-root');
+    info.styles.forEach(style => root.appendChild(style.cloneNode(true)));
+    root.appendChild(node);
+    panel.replaceChildren(host);
+  };
+}
+function pagesMode() {
+  return storageGet(PAGES_KEY) === 'all' ? 'all' : 'pages';
+}
+function setPagesMode(mode) {
+  storageSet(PAGES_KEY, mode);
+  if (backState.card) {
+    renderBack(backState.card);
+  }
+}
+function showPages(stage, plan) {
+  const tabs = plan.pages.map((page, i) => ({ type: 'html', label: plan.secs.labels[page[0]],
+    content: '', mount: autoPageMount(plan, i) }));
+  mountTabs(stage, tabs, [{ label: 'All', title: 'Show the whole answer in one piece',
+    onClick: () => setPagesMode('all') }]);
+}
+// "All" mode: the answer as it is, with a bar of links to its sections (the current one marked).
+function showOutline(stage, plan) {
+  const row = document.createElement('div');
+  row.className = 'fc-barrow';
+  const bar = document.createElement('div');
+  bar.className = 'fc-tabbar';
+  bar.setAttribute('role', 'group');
+  bar.setAttribute('aria-label', 'Sections');
+  const { blocks, starts, labels } = plan.secs;
+  const chips = labels.map((label, i) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'fc-tab';
+    chip.textContent = label;
+    chip.addEventListener('click', () => {
+      chosen = i;
+      stage.scrollTop += i === 0 ? -stage.scrollTop : blocks[starts[i]].getBoundingClientRect().top -
+        stage.getBoundingClientRect().top - row.offsetHeight - 2;
+    });
+    bar.appendChild(chip);
+    return chip;
+  });
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.className = 'fc-extra';
+  back.textContent = 'Pages';
+  back.title = 'Show the answer in pages';
+  back.setAttribute('aria-label', back.title);
+  back.addEventListener('click', () => setPagesMode('pages'));
+  row.append(bar, back);
+  stage.insertBefore(row, stage.firstChild);
+  let shown = -1;
+  let chosen = -1;                 // the last link clicked: a section near the end can not reach the top
+  const follow = () => {
+    const view = stage.getBoundingClientRect();
+    const edge = view.top + row.offsetHeight + 12;
+    let at = 0;
+    starts.forEach((start, i) => {
+      if (blocks[start].getBoundingClientRect().top <= edge) {
+        at = i;
+      }
+    });
+    if (stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 2) {       // at the end: the last one in view
+      starts.forEach((start, i) => {
+        if (blocks[start].getBoundingClientRect().top < view.bottom - 8) {
+          at = i;
+        }
+      });
+    }
+    if (chosen >= 0) {
+      const top = blocks[starts[chosen]].getBoundingClientRect().top;
+      if (top >= view.top - 8 && top < view.bottom - 8) {
+        at = chosen;
+      } else {
+        chosen = -1;
+      }
+    }
+    if (at !== shown) {
+      shown = at;
+      chips.forEach((chip, i) => chip.setAttribute('aria-current', String(i === at)));
+      bar.scrollLeft = chips[at].offsetLeft - (bar.clientWidth - chips[at].offsetWidth) / 2;
+    }
+  };
+  if (stage.fcOutlineFollow) {
+    stage.removeEventListener('scroll', stage.fcOutlineFollow);
+  }
+  stage.fcOutlineFollow = follow;
+  stage.addEventListener('scroll', follow, { passive: true });
+  follow();
+}
+// Calls done once the pictures of `stage` have loaded or failed, or after AUTO_IMAGE_WAIT_MS.
+function afterImages(stage, done) {
+  const waiting = [];
+  const scan = root => root.querySelectorAll('img').forEach(img => {
+    if (!img.complete) {
+      waiting.push(img);
+    }
+  });
+  scan(stage);
+  stage.querySelectorAll('.fc-styled').forEach(host => host.shadowRoot && scan(host.shadowRoot));
+  if (!waiting.length) {
+    done();
+    return;
+  }
+  let left = waiting.length;
+  let finished = false;
+  const finish = () => {
+    if (!finished) {
+      finished = true;
+      done();
+    }
+  };
+  waiting.forEach(img => {
+    const one = () => {
+      left--;
+      if (left === 0) {
+        finish();
+      }
+    };
+    img.addEventListener('load', one, { once: true });
+    img.addEventListener('error', one, { once: true });
+  });
+  setTimeout(finish, AUTO_IMAGE_WAIT_MS);
+}
+function autoPresent(stage) {
+  const st = backState;
+  const token = st.token;
+  if (st.type !== 'html' && st.type !== 'md') {
+    updateExpand();
+    return;
+  }
+  afterImages(stage, () => {
+    if (token !== st.token || (isFlipped() && stage.scrollTop > 0)) {   // another card, or being read
+      return;
+    }
+    st.area = { w: stage.clientWidth, h: stage.clientHeight };
+    st.plan = planAutoPages(stage);
+    if (st.plan) {
+      const badge = document.getElementById('back-type-badge');
+      if (pagesMode() === 'pages') {
+        showPages(stage, st.plan);
+        badge.textContent = st.type + ' · ' + st.plan.pages.length + ' pages';
+      } else {
+        showOutline(stage, st.plan);
+        badge.textContent = st.type + ' · ' + st.plan.secs.starts.length + ' sections';
+      }
+      watchScrollHint(stage);
+    }
+    updateExpand();
+  });
+}
+// Made for another size (rotated, resized): plan again. A phone's address bar moving is not
+// another size: the card's height may change by AUTO_RESIZE_RATIO (a page then runs a little
+// over or under, which the fade shows).
+let autoWired = false;
+let autoTimer = 0;
+function wireAuto(stage) {
+  if (autoWired) {
+    return;
+  }
+  autoWired = true;
+  window.addEventListener('resize', () => {
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(() => {
+      const st = backState;
+      const was = st.area;
+      if (!was || isShown('viewer') || isShown('reader')) {
+        return;
+      }
+      if (was.w !== stage.clientWidth || Math.abs(was.h - stage.clientHeight) > AUTO_RESIZE_RATIO * was.h) {
+        renderBack(st.card);
+      }
+    }, AUTO_RESIZE_MS);
+  });
+}
+// The Expand button is there when the answer scrolls or is in pages.
+function updateExpand() {
+  const stage = document.getElementById('back-content');
+  document.getElementById('btn-expand').hidden =
+    !(backState.plan || stage.scrollHeight > stage.clientHeight + 1);
+}
+
+// ── Full-screen answer ─────────────────────────────────────────────────────
+// The whole answer as it is in the cell (its own tabs included), on the whole screen.
+const reader = { back: null, inerted: [] };
+function openReader() {
+  const st = backState;
+  const box = document.getElementById('reader');
+  if (!st.card || !box.classList.contains('hidden')) {
+    return false;
+  }
+  document.getElementById('reader-title').textContent = String(st.card.title || '');
+  reader.back = document.activeElement;
+  reader.inerted = Array.from(document.querySelectorAll('.top-bar, .screen'))
+    .filter(node => !node.hasAttribute('inert'));
+  reader.inerted.forEach(node => node.setAttribute('inert', ''));
+  document.body.classList.add('reader-open');
+  box.classList.remove('hidden');
+  mountBack(document.getElementById('reader-body'), st.content, st.type);
+  box.focus();
+  return true;
+}
+function closeReader() {
+  const box = document.getElementById('reader');
+  if (box.classList.contains('hidden')) {
+    return;
+  }
+  viewerClose();
+  box.classList.add('hidden');
+  document.body.classList.remove('reader-open');
+  reader.inerted.forEach(node => node.removeAttribute('inert'));
+  reader.inerted = [];
+  document.getElementById('reader-body').textContent = '';
+  const back = reader.back;
+  reader.back = null;
+  if (back && back.isConnected && back.focus) {
+    back.focus();
+  }
+}
+// Escape closes; V a picture; left/right the tabs of an answer that has them; the rest is
+// scrolling, which the browser does.
+function readerKey(e, key) {
+  if (e.ctrlKey || e.metaKey) {
+    return;
+  }
+  if (key === 'Escape') {
+    closeReader();
+    e.preventDefault();
+  } else if (key === 'v') {
+    if (viewerOpenFirst()) {
+      e.preventDefault();
+    }
+  } else if (key === 'ArrowLeft' || key === 'ArrowRight') {
+    if (tabsStep(document.getElementById('reader-body'), key === 'ArrowRight' ? 1 : -1)) {
+      e.preventDefault();
+    }
+  }
+}
+
 // ── Scroll fade ────────────────────────────────────────────────────────────
 // The answer scrolls inside the card; a fade at its bottom edge shows that there is more.
 function updateScrollHint() {
   const el = document.getElementById('back-content');
   el.classList.toggle('more', el.scrollHeight - el.scrollTop - el.clientHeight > 2);
+  updateExpand();
 }
 let scrollHintWired = false;
 let scrollHintObserver = null;
@@ -3035,7 +3533,7 @@ function viewerCollect(scope) {
 }
 // The visible tab of the answer, or the whole answer.
 function viewerScope() {
-  const stage = document.getElementById('back-content');
+  const stage = document.getElementById(isShown('reader') ? 'reader-body' : 'back-content');
   const root = stage.firstElementChild;
   return root && root.fcTabs ? root.fcTabs.panels[root.fcTabs.current] : stage;
 }
@@ -3057,6 +3555,12 @@ function viewerTarget(e) {
   }
   return found && viewerOffered(found) ? found : null;
 }
+function onPictureClick(e) {
+  const el = Date.now() - viewer.closedAt < VIEWER_GHOST_CLICK_MS ? null : viewerTarget(e);
+  if (el) {
+    viewerOpen(el);
+  }
+}
 let viewerWired = false;
 function wireViewer(stage) {
   stage.classList.add('zoomable');
@@ -3064,12 +3568,8 @@ function wireViewer(stage) {
     return;
   }
   viewerWired = true;
-  stage.addEventListener('click', e => {
-    const el = Date.now() - viewer.closedAt < VIEWER_GHOST_CLICK_MS ? null : viewerTarget(e);
-    if (el) {
-      viewerOpen(el);
-    }
-  });
+  stage.addEventListener('click', onPictureClick);
+  document.getElementById('reader-body').addEventListener('click', onPictureClick);
   viewerWirePointer();
   window.addEventListener('resize', () => {
     if (isShown('viewer')) {
@@ -4308,7 +4808,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.24.1';
+const APP_VERSION = '2026.11.25.1';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
