@@ -265,12 +265,12 @@ await test('outline: a link scrolls its section to the top under the bar; the cu
 
 // ── the full-screen answer ──────────────────────────────────────────────────
 await test('Expand: the whole answer on the whole screen (not in pages), titled; Escape closes it only', async () => {
-  const t = await open(FIVE, { area: 300, title: 'Quiescent' });
+  const t = await open(FIVE, { area: 300, title: 'Sample card' });
   const { env, w } = t;
   assert.equal(env.$('reader').classList.contains('hidden'), true);
   env.$('btn-expand').click();
   assert.equal(env.$('reader').classList.contains('hidden'), false);
-  assert.equal(env.$('reader-title').textContent, 'Quiescent');
+  assert.equal(env.$('reader-title').textContent, 'Sample card');
   assert.equal(env.$('reader-body').querySelectorAll('h3').length, 4, 'all of it');
   assert.equal(env.$('reader-body').querySelector('.fc-tabs'), null, 'no pages in the reader');
   assert.equal(env.w.document.body.classList.contains('reader-open'), true);
