@@ -41,4 +41,6 @@ if node -e "require.resolve('playwright')" 2>/dev/null; then
   node test/layout.mjs
   echo "== viewer"
   node test/viewer.mjs
+  echo "== long answer"
+  node test/long-answer.mjs
 fi
