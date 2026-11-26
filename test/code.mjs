@@ -350,7 +350,7 @@ export function loadCodeGs(file = path.join(here, '..', 'Code.gs')) {
     ` getActivity, forecastFrom_, studyDayOf_, ROLLOVER_HOUR, FORECAST_DAYS,` +
     ` onEdit, onOpen, highlightAll, addThumbnailColumn, checkSheetTools,` +
     ` rebuildHorizons, replayRecall_, getHorizonCards, applyHorizon, getRecallRows,` +
-    ` getCardsIfUnchanged,` +
+    ` getCardsIfUnchanged, getLearning,` +
     ` tokenize_, sniffType_, sniffCard_, tokenizeCard_, tabsSummary_, imageFormula_, thumbFor_,` +
     ` addTabsColumn, getActiveRowPreview,` +
     ` showPreviewSidebar, showPreviewWindow, HL_STYLES, THUMB_HEADER, TABS_HEADER,` +
@@ -1248,7 +1248,7 @@ if (isMain) {
     assert.equal(env.api.saveSettings({ new_per_day: null }).ok, true);
   });
 
-  test('upcoming: sub-day cards not due yet, soonest first; nextDue = earliest of all', () => {
+  test('upcoming: learning cards not due yet, soonest first; nextDue = earliest of all', () => {
     const env = fixture();
     const now = Date.now();
     const MIN = 60000;
@@ -1260,12 +1260,41 @@ if (isMain) {
     env.put(7, { id: 'new', state: 0 });
     env.put(8, { id: 'bad', state: 1, scheduled_days: 0, due: 'not a date' });
     env.put(9, { id: 'far', state: 1, scheduled_days: 0, due: iso(now + 2 * DAY) });
+    env.put(10, { id: 'rev0', state: 2, scheduled_days: 0, due: iso(now + 7 * MIN) });
+    env.put(11, { id: 'odd', state: 1, scheduled_days: 5, due: iso(now + 30 * MIN) });
     const res = plain(env.api.bootstrap());
-    assert.equal(res.waiting.length, 2, 'day, blank, new, bad and far cards do not wait');
+    assert.equal(res.waiting.length, 3, 'review, blank, new, bad and far cards do not wait');
     const gaps = res.waiting.map((t) => Math.round((Date.parse(t) - now) / MIN));
-    assert.deepEqual(gaps, [10, 60]);
+    assert.deepEqual(gaps, [10, 30, 60], 'by state, not by the interval value');
     assert.equal(Math.round((Date.parse(res.nextDue) - now) / MIN), 5, 'the day card is next');
     assert.equal(res.stats.due, 3, 'waiting cards are not counted as due');
+  });
+
+  test('getLearning: learning cards due now as whole cards, the rest as due times', () => {
+    const env = fixture();
+    const now = Date.now();
+    const MIN = 60000;
+    env.put(2, { id: 'l-now', state: 1, scheduled_days: 10 / 1440, due: iso(now - 2 * MIN) });
+    env.put(3, { id: 'r-now', state: 3, scheduled_days: 0, due: iso(now - 1 * MIN), title: 'T' });
+    env.put(4, { id: 'rev', state: 2, scheduled_days: 3, due: iso(now - DAY) });
+    env.put(5, { id: 'new', state: 0 });
+    env.put(6, { id: 'l-soon', state: 1, scheduled_days: 10 / 1440, due: iso(now + 6 * MIN) });
+    env.put(7, { id: 'l-late', state: 3, scheduled_days: 60 / 1440, due: iso(now + 50 * MIN) });
+    env.put(8, { id: 'rev-fut', state: 2, scheduled_days: 4, due: iso(now + 2 * DAY) });
+    const res = plain(env.api.getLearning());
+    assert.deepEqual(res.due.map((c) => c.id), ['l-now', 'r-now'], 'most overdue first');
+    assert.equal(res.due[1].title, 'T');
+    assert.equal(typeof res.due[0].due, 'string', 'dates cleaned like getDueCards');
+    assert.deepEqual(res.waiting.map((w) => w.id), ['l-soon', 'l-late']);
+    assert.deepEqual(res.waiting.map((w) => Math.round((Date.parse(w.due) - now) / MIN)), [6, 50]);
+    const same = plain(env.api.getDueCards()).filter((c) => [1, 3].includes(Number(c.state)));
+    assert.deepEqual(res.due, same, 'the same card objects as getDueCards sends');
+  });
+
+  test('getLearning: nothing learning gives empty lists', () => {
+    const env = fixture();
+    env.put(2, { id: 'rev', state: 2, scheduled_days: 3, due: iso(Date.now() - DAY) });
+    assert.deepEqual(plain(env.api.getLearning()), { due: [], waiting: [] });
   });
 
   test('upcoming: nothing scheduled ahead gives no waiting card and nextDue null', () => {

@@ -281,6 +281,19 @@ function getDueCards(offsetMin) {
   return dueView_(readCards_(), new Date(), offsetMsOf_(offsetMin), getConfig_()).cards;
 }
 
+// ─── API: getLearning ──────────────────────────────────────────────────────
+// For the done screen, from one sheet read: the learning-phase cards due now (whole
+// cards, as getDueCards sends them) and { id, due } of those not due yet, soonest first.
+// Cards reviewed on another device show up in both.
+function getLearning() {
+  const cards = readCards_();
+  const now   = new Date();
+  return {
+    due:     dueCardsFrom_(cards, now).filter(isLearning_),
+    waiting: upcomingFrom_(cards, now).waiting
+  };
+}
+
 // ─── API: bootstrap ────────────────────────────────────────────────────────
 // Stats and due cards from a single sheet read (home screen).
 
@@ -298,15 +311,22 @@ function bootstrap(offsetMin) {
     cards:    view.cards,
     newLimit: view.newLimit,
     forecast: forecastFrom_(cards, now, offsetMs),
-    waiting:  upcoming.waiting,
+    waiting:  upcoming.waiting.map(w => w.due),
     nextDue:  upcoming.nextDue,
     config:   config
   };
 }
 
-// What comes due next, for the home countdown. waiting: due times (ISO, soonest first)
-// of sub-day cards (a learning step: scheduled_days < 1, due within a day) that are not
-// due yet; the same cards the review session holds back (see requeue() in index.html).
+// Learning phase: Learning or Relearning. Its steps are sub-day (10 min, 1 h), a Review
+// card is always 1+ days out. The review session holds these cards back until due.
+function isLearning_(card) {
+  const state = Number(card.state);
+  return state === 1 || state === 3;
+}
+
+// What comes due next, for the countdowns of the home and done screens. waiting: { id,
+// due (ISO) } of learning-phase cards that are not due yet (and within a day, so a stale
+// row cannot start an absurd countdown), soonest first, whoever reviewed them last.
 // nextDue: the earliest future due time of any card, or null; the home screen refreshes
 // its counts then.
 function upcomingFrom_(cards, now) {
@@ -318,11 +338,11 @@ function upcomingFrom_(cards, now) {
     const ms = new Date(c.due).getTime();
     if (!(ms > nowMs)) return;   // due already, or not a date
     next = Math.min(next, ms);
-    if (Number(c.scheduled_days) < 1 && ms - nowMs < 86400000) waiting.push(ms);
+    if (isLearning_(c) && ms - nowMs < 86400000) waiting.push({ id: c.id, ms: ms });
   });
-  waiting.sort((a, b) => a - b);
+  waiting.sort((a, b) => a.ms - b.ms);
   return {
-    waiting: waiting.map(ms => new Date(ms).toISOString()),
+    waiting: waiting.map(w => ({ id: w.id, due: new Date(w.ms).toISOString() })),
     nextDue: isFinite(next) ? new Date(next).toISOString() : null
   };
 }
