@@ -1609,6 +1609,9 @@ let homeNext     = 0;      // Home: earliest future due time (ms) of any card, 0
 let homeDue      = 0;      // Home: the Due count on screen
 let homeFetching = false;  // Home: a refresh is under way
 let homeFetchAt  = 0;      // Home: when the last read started
+let doneServer   = null;   // done screen: { id, due } of the learning cards the server holds
+let doneReading  = false;  // done screen: a read is under way
+let doneReadAt   = 0;      // done screen: when the last read started
 let audioCtx     = null;   // resume beep; created inside a rating (a user gesture)
 const BASE_TITLE = document.title;
 // A sub-day card (Again / lapse, 10 min step) is queued this many other cards ahead;
@@ -1628,6 +1631,10 @@ const HOME_CACHE_MS = 5 * 60 * 1000;
 // is behind), or fails, it asks again after this long, doubling on failures up to a minute.
 const HOME_RETRY_MS = 5000;
 let homeRetryMs = HOME_RETRY_MS;
+let doneRetryMs = HOME_RETRY_MS;   // the same for the done screen
+// A card reviewed on another device shows up only in a read: coming back to the page
+// reads again when the last read is older than this.
+const RETURN_REFRESH_MS = 60 * 1000;
 // Fields a review changes; a snapshot of them makes the last rating undoable
 const FSRS_KEYS = [
   'stability', 'difficulty', 'elapsed_days', 'scheduled_days', 'reps', 'lapses',
@@ -1874,18 +1881,30 @@ function homeTick() {
   renderHomeWait();
   const due = nextHomeDue();
   if (due && Date.now() >= due) {
-    refreshHome();
+    refreshHome(homeWaiting.some(ms => ms <= Date.now()), homeRetryMs);
   }
 }
-function refreshHome() {
+// Reads Home again without a spinner, unless a read is under way or the last one began
+// less than `gap` ms ago. notify: beep and mark the tab title if the Due count grew.
+function refreshHome(notify, gap) {
   const now = Date.now();
-  if (homeFetching || now - homeFetchAt < homeRetryMs) {
+  if (homeFetching || now - homeFetchAt < gap) {
     return;
   }
   homeFetching = true;   // until the read answers: one request at a time
   homeFetchAt  = now;
-  const notify = homeWaiting.some(ms => ms <= now);
   whenSaved(() => fetchHome({ silent: true, notify: notify }), SAVE_WAIT_MS);
+}
+// The person comes back to the page (tab or window): cards reviewed elsewhere meanwhile.
+function refreshOnReturn() {
+  if (document.hidden) {
+    return;
+  }
+  if (isShown('s-home')) {
+    refreshHome(false, RETURN_REFRESH_MS);
+  } else if (isShown('s-complete') && Date.now() - doneReadAt >= RETURN_REFRESH_MS) {
+    readDone(false);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2706,34 +2725,102 @@ function showNext() {
 }
 // Done screen with waiting cards: counts down to the earliest due time, then the
 // session carries on by itself. Any other screen stops the countdown (see show).
+// The done screen counts down to the learning-phase cards (all sub-day): the ones this
+// session holds back and, once the server has answered, the ones reviewed on another
+// device. When the soonest is due, a card of this session resumes at once; one from
+// another device is read first and joins the session. Home counts down to the same cards.
+function doneList() {
+  const mine = deck.slice(idx);
+  const have = new Set(deck.map(c => c.id));
+  const away = (doneServer || []).filter(w => !have.has(w.id));
+  return mine.map(c => new Date(c.due).getTime()).concat(away.map(w => Date.parse(w.due)));
+}
+function renderDone() {
+  const dues = doneList();
+  document.getElementById('cs-title').textContent = dues.length ? 'Done for now' : 'All done!';
+  document.getElementById('cs-sub').textContent =
+    dues.length ? waitText(dues, 'Resumes by itself.') : "Today's session is complete.";
+}
+function startDoneTimer() {
+  stopWait();
+  if (doneList().length) {
+    waitTimer = setInterval(doneTick, 1000);
+  }
+}
+function doneTick() {
+  renderDone();
+  const dues = doneList();
+  if (dues.length && Date.now() >= Math.min(...dues)) {
+    if (deck.slice(idx).some(c => new Date(c.due).getTime() <= Date.now())) {
+      resumeSession(true);
+    } else {
+      readDone(true);   // the soonest card is from another device: read it
+    }
+  }
+}
+function resumeSession(notify) {
+  show('s-session');   // also stops the timer
+  showNext();
+  if (notify) {
+    notifyResume();
+  }
+}
+// Reads the learning cards from the server (after the pending saves landed): its list
+// joins the countdown, and cards that are due now join the session. fromTimer: a card is
+// due, so ask again only after doneRetryMs and beep on resuming.
+function readDone(fromTimer) {
+  const now = Date.now();
+  if (doneReading || (fromTimer && now - doneReadAt < doneRetryMs)) {
+    return;
+  }
+  doneReading = true;
+  doneReadAt  = now;
+  whenSaved(() => {
+    google.script.run
+      .withSuccessHandler(res => {
+        doneReading = false;
+        if (!isShown('s-complete')) {
+          return;   // the person left meanwhile
+        }
+        doneRetryMs = HOME_RETRY_MS;
+        doneServer  = Array.isArray(res.waiting) ? res.waiting : [];
+        if (joinSession(res.due)) {
+          resumeSession(fromTimer);
+          return;
+        }
+        renderDone();
+        startDoneTimer();
+      })
+      .withFailureHandler(() => {
+        doneReading = false;
+        doneRetryMs = Math.min(doneRetryMs * 2, 60000);   // keep what we have, ask again later
+      })
+      .getLearning();
+  }, SAVE_WAIT_MS);
+}
+// Learning cards due now that the session does not hold yet (reviewed on another device).
+function joinSession(cards) {
+  const have  = new Set(deck.map(c => c.id));
+  const fresh = (cards || []).filter(c => !have.has(c.id));
+  if (fresh.length) {
+    deck.splice(idx, 0, ...fresh);
+    sessionTotal += fresh.length;
+    updateProgress();
+  }
+  return fresh.length;
+}
 function finishSession() {
   stopWait();
-  const waiting = deck.slice(idx);
+  doneServer  = null;
+  doneRetryMs = HOME_RETRY_MS;
   document.getElementById('cs-total').textContent = sessionStats.total;
   document.getElementById('cs-again').textContent = sessionStats.again;
   document.getElementById('cs-good').textContent  = sessionStats.good;
-  if (!waiting.length) {
-    document.getElementById('cs-title').textContent = 'All done!';
-    document.getElementById('cs-sub').textContent   = "Today's session is complete.";
-    show('s-complete');
-    return;
-  }
-  document.getElementById('cs-title').textContent = 'Done for now';
-  const dues     = () => waiting.map(c => new Date(c.due).getTime());
-  const nextDue  = () => Math.min(...dues());
-  const line     = () => waitText(dues(), 'Resumes by itself.');
-  document.getElementById('cs-sub').textContent = line();
+  renderDone();
   show('s-complete');
   primeAudio();   // still inside the rating that ended the session
-  waitTimer = setInterval(() => {
-    if (Date.now() >= nextDue()) {
-      show('s-session');   // also stops this timer
-      showNext();
-      notifyResume();
-    } else {
-      document.getElementById('cs-sub').textContent = line();
-    }
-  }, 1000);
+  startDoneTimer();
+  readDone(false);
 }
 function stopWait() {
   if (waitTimer !== null) {
@@ -4808,7 +4895,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.25.1';
+const APP_VERSION = '2026.11.26.1';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
@@ -4891,6 +4978,8 @@ function navigateTop(url) {
 document.getElementById('app-version').textContent = 'v' + APP_VERSION;
 setInspector(storageGet(INSPECT_KEY) === '1');
 document.addEventListener('visibilitychange', maybeCheckVersion);
+document.addEventListener('visibilitychange', refreshOnReturn);
+window.addEventListener('focus', refreshOnReturn);
 // Home can beep with no rating before it: the first tap or key press unlocks the audio.
 ['pointerdown', 'keydown'].forEach(type => {
   document.addEventListener(type, primeAudio, { once: true });

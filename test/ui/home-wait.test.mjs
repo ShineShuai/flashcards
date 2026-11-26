@@ -1,7 +1,7 @@
 // Run: node test/ui/home-wait.test.mjs   (needs: npm install --no-save jsdom dompurify marked)
 // Home watches the clock: countdown to sub-day cards, silent refresh when a card is due.
 import assert from 'node:assert/strict';
-import { boot, card, NOW, sleep, until } from './harness.mjs';
+import { boot, card, NOW, sleep, stubAudio, until } from './harness.mjs';
 
 let failed = 0;
 async function test(name, fn) {
@@ -19,29 +19,6 @@ const iso = (ms) => new Date(ms).toISOString();
 const inMin = (n) => iso(NOW.getTime() + n * MIN);
 const TEN = /^Next: 1 card in (10:00|9:5\d)\. Updates by itself\.$/;
 
-// An AudioContext that records its oscillators; `log.created` counts the contexts made.
-function stubAudio(w) {
-  const log = { created: 0, osc: [] };
-  w.AudioContext = class {
-    constructor() {
-      log.created++;
-      this.state = 'running';
-      this.currentTime = 0;
-      this.destination = {};
-    }
-    resume() {}
-    createGain() {
-      const param = { setValueAtTime() {}, exponentialRampToValueAtTime() {} };
-      return { gain: param, connect() {} };
-    }
-    createOscillator() {
-      const osc = { frequency: { value: 0 }, connect() {}, start() {}, stop() {} };
-      log.osc.push(osc);
-      return osc;
-    }
-  };
-  return log;
-}
 const tap = (w) => w.document.dispatchEvent(new w.Event('pointerdown'));
 const hide = (w, hidden) => Object.defineProperty(w.document, 'hidden', { configurable: true, value: hidden });
 const home = async (options) => {
@@ -167,6 +144,27 @@ await test('done screen and Home agree: both count down, or neither does', async
   env.w.showHome();
   await until(() => env.shown('s-home'));
   assert.equal(env.shown('home-wait'), false);
+});
+
+await test('back on Home after 60 s: reads again, no beep', async () => {
+  const cards = [];
+  let up = {};
+  const env = await home({ cards, upcoming: () => up });
+  const log = stubAudio(env.w);
+  tap(env.w);
+  const reads = bootstraps(env);
+  up = { waiting: [inMin(5)], nextDue: inMin(5) };
+  cards.push(card('1'));
+  env.w.document.dispatchEvent(new env.w.Event('visibilitychange'));
+  await sleep(30);
+  assert.equal(bootstraps(env), reads, 'the last read is fresh');
+  env.clock.advance(61 * 1000);
+  env.w.dispatchEvent(new env.w.Event('focus'));
+  await until(() => env.shown('home-wait'));
+  assert.equal(bootstraps(env), reads + 1);
+  assert.match(env.txt('home-wait'), /^Next: 1 card in 3:5\d\. Updates by itself\.$/);
+  assert.equal(env.txt('stat-due'), '1');
+  assert.equal(log.osc.length, 0, 'the person is looking: no beep');
 });
 
 console.log(failed ? `\n${failed} failed` : '\nall passed');

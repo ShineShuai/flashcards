@@ -67,6 +67,30 @@ const html = fs.readFileSync(path.join(here, '..', '..', 'index.html'), 'utf8')
   .replace(/<script src="https:\/\/cdn[^>]*><\/script>/g, '')   // marked, DOMPurify: below
   .replace(/<link[^>]*fonts[^>]*>/, '');
 
+// An AudioContext that records its oscillators; `log.created` counts the contexts made.
+export function stubAudio(w) {
+  const log = { created: 0, osc: [] };
+  w.AudioContext = class {
+    constructor() {
+      log.created++;
+      this.state = 'running';
+      this.currentTime = 0;
+      this.destination = {};
+    }
+    resume() {}
+    createGain() {
+      const param = { setValueAtTime() {}, exponentialRampToValueAtTime() {} };
+      return { gain: param, connect() {} };
+    }
+    createOscillator() {
+      const osc = { frequency: { value: 0 }, connect() {}, start() {}, stop() {} };
+      log.osc.push(osc);
+      return osc;
+    }
+  };
+  return log;
+}
+
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function until(fn, ms = 2000) {
@@ -89,6 +113,9 @@ export const card = (id, keywords = 'a;b;c', extra = {}) => ({
 //          versionServer { version, url, fail } (getVersion; default: the page's own version),
 //          reviewLog { columns, rows }, weightsHistory [..], saveSettings (patch, meta) => reply,
 //          forecast [..], newLimit { limit, introduced, remaining } (both sent with bootstrap),
+//          learning (derived) => { due: [cards], waiting: [{ id, due: ISO }] } (getLearning;
+//          derived = what the saved ratings leave in the learning phase, not due yet: the
+//          default reply),
 //          upcoming { waiting: [ISO..], nextDue: ISO } | () => that (sent with bootstrap; read
 //          on every call, so a test can change it; absent: like an older server),
 //          activity { today, days } | Error (getActivity)
@@ -102,13 +129,14 @@ export function boot(options = {}) {
   const { cards = [], storage = {}, dark = false, blockStorage = false,
           docsFail = false, failDue = false, config, realMarkdown = false, noSanitizer = false,
           versionServer = {}, reviewLog, weightsHistory = [], saveSettings, forecast, newLimit,
-          upcoming, activity, horizonCards = [], applyHorizon, recallRows = [], aheadCards,
+          upcoming, learning, activity, horizonCards = [], applyHorizon, recallRows = [],
+          aheadCards,
           server = {}, now = NOW } = options;
   let clock;
   const ev = [];                                  // what the "server" saw, in order
   const srv = { failFirst: 0, delay: 0, reply: { ok: true }, saved: [], settingsCalls: [],
                 bootstrapArgs: [], activityArgs: [], dueArgs: [], horizonCalls: [],
-                recallCalls: 0, aheadCalls: [], ...server };
+                recallCalls: 0, aheadCalls: [], learningCalls: 0, ...server };
   const own = html.match(/^const APP_VERSION = '([^']*)';/m)[1];
   const ver = { version: own, url: 'https://script.google.test/macros/s/ID/exec', fail: false,
                 calls: 0, ...versionServer };   // calls: kept out of ev, which orders saves
@@ -182,6 +210,19 @@ export function boot(options = {}) {
             srv.saved.push({ id: args[0], fsrs: args[1], meta: args[2] });
             ok(srv.reply);
           }, srv.delay);
+        } else if (fn === 'getLearning') {
+          srv.learningCalls++;
+          const last = new Map(srv.saved.map((x) => [x.id, x.fsrs]));
+          const at = clock.now().getTime();
+          const derived = { due: [], waiting: [...last]
+            .filter(([, f]) => [1, 3].includes(Number(f.state)) && Date.parse(f.due) > at)
+            .map(([id, f]) => ({ id, due: f.due })) };
+          const reply = learning ? learning(derived) : derived;
+          if (reply instanceof Error) {
+            bad({ message: reply.message });
+          } else {
+            ok({ due: reply.due.map((c) => ({ ...c })), waiting: reply.waiting });
+          }
         } else if (fn === 'getActivity') {
           srv.activityArgs.push(args);
           if (activity instanceof Error) {
