@@ -5,12 +5,17 @@
 // from the sizes and from invariants (no heading lost, doubled or reordered; every page fits), not
 // from the layout of one particular cell.
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const pageUrl = 'file://' + path.join(here, '..', 'index.html');
+// The page is served over http by a route (nothing is fetched). Loaded from file://, Chromium
+// sometimes dropped localStorage on a reload in a fresh context (9 of 40 runs), so "reload keeps
+// All" failed at random; the app is fine, and Apps Script serves it over https anyway.
+const pageUrl = 'http://flash.test/index.html';
+const indexHtml = fs.readFileSync(path.join(here, '..', 'index.html'), 'utf8');
 
 function stub(card) {
   return `window.marked = { parse: (md) => md.split(/\\n\\n+/).map((b) => /^## /.test(b) ? '<h2>' + b.slice(3) + '</h2>' : /^# /.test(b) ? '<h1>' + b.slice(2) + '</h1>' : '<p>' + b + '</p>').join('') };
@@ -36,7 +41,13 @@ async function test(name, view, content, fn, { type = 'html', mode = null, route
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.route('**/*', (r) => (r.request().url().startsWith('http') ? r.abort() : r.continue()));
+  await page.route('**/*', (r) => {
+    const url = r.request().url();
+    if (url === pageUrl) {
+      return r.fulfill({ contentType: 'text/html', body: indexHtml });
+    }
+    return url.startsWith('http') ? r.abort() : r.continue();
+  });
   if (routes) {
     await routes(page);
   }
