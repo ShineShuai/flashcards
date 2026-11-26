@@ -40,6 +40,8 @@ jobs:
       - run: node test/version.mjs
       - run: node test/contrast.mjs
       - run: node test/sync.mjs
+      - run: node test/dev.mjs
+      - run: node test/devpush.mjs
 
   # index.html in jsdom with a stubbed google.script.run
   ui:
