@@ -19,6 +19,11 @@ const get = async (dev, url, options) => (await fetch(dev.base + url, options)).
 const cell = (d, row, name) => d.env().sheets.get('cards')
   .get(row, d.env().api.HEADERS.indexOf(name) + 1);       // row 2 is card 1
 
+// The server runs on the real clock, so the review is dated relative to now: fixed
+// dates go stale (a card due "2026-11-26" is due again the next day).
+const reviewedAt = new Date().toISOString();
+const dueAt = new Date(Date.now() + 3 * 86400000).toISOString();
+
 let failed = 0;
 async function test(name, fn) {
   try {
@@ -59,7 +64,7 @@ await test('bootstrap comes from the real Code.gs: seeded cards, all new', async
 await test('updateCard writes the card and the log; the card is no longer due', async () => {
   const fsrs = {
     stability: 3, difficulty: 5, elapsed_days: 0, scheduled_days: 3, reps: 1, lapses: 0,
-    state: 2, last_review: '2026-11-23T12:00:00.000Z', due: '2026-11-26T12:00:00.000Z',
+    state: 2, last_review: reviewedAt, due: dueAt,
     weak_keywords: '', miss_streak: 0, ok_days: 0, fail_days: 0, trail: '', cap_days: '',
   };
   const saved = await rpc(dev, 'updateCard', '1', fsrs, { hints: 0, duration_ms: 1000 });
@@ -88,7 +93,7 @@ await test('the sheet is kept between runs, and --reset reseeds it', async () =>
   await dev.close();
   dev = await start();
   assert.equal(cell(dev, 2, 'reps'), 1, 'the review survived');
-  assert.equal(cell(dev, 2, 'last_review'), '2026-11-23T12:00:00.000Z');
+  assert.equal(cell(dev, 2, 'last_review'), reviewedAt);
   await dev.close();
   dev = await start({ reset: true });
   assert.equal(cell(dev, 2, 'reps'), '');

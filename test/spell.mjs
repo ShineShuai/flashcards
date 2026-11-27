@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const html = fs.readFileSync(path.join(here, '..', 'index.html'), 'utf8');
 const block = html.match(/\/\/ @spell-begin([\s\S]*?)\/\/ @spell-end/)[1];
-const { spellKey, spellThreshold, levenClose, spellScore } = vm.runInNewContext(
-  `${block}\n({ spellKey, spellThreshold, levenClose, spellScore })`,
+const { spellKey, spellThreshold, levenClose, spellScore, spellMatch } = vm.runInNewContext(
+  `${block}\n({ spellKey, spellThreshold, levenClose, spellScore, spellMatch })`,
   { Array, Math, Infinity },
 );
 
@@ -24,6 +24,8 @@ function test(name, fn) {
     console.log('FAIL ' + name + '\n     ' + err.message.split('\n').join('\n     '));
   }
 }
+// spellMatch runs in another realm: compare plain copies, not prototypes.
+const match = (typed, targets) => JSON.parse(JSON.stringify(spellMatch(typed, targets)));
 const is = (typed, target, want) => {
   assert.equal(spellScore(typed, target), want, `${typed} ~ ${target}`);
 };
@@ -70,6 +72,32 @@ test('edit distance counts code points, not UTF-16 units', () => {
   assert.equal(levenClose('😀😀😀😀😀', '😀😀😀😀x', 1), true);
   is('𠮷野家', '𠮷野家', 0);
 });
+test('a swapped letter pair is two edits: budget 1 misses it, budget 2 keeps it', () => {
+  is('recieve', 'receive', Infinity);      // 7 letters, budget 1
+  is('recieved', 'received', 1);           // 8 letters, budget 2
+  is('from', 'form', Infinity);
+});
+test('spellMatch: exact versus close per input', () => {
+  const got = match(['Zelle', 'mitocondria', 'xyz', ''], ['mitochondria', 'zelle', 'nucleus']);
+  assert.deepEqual(got, [{ j: 1, exact: true }, { j: 0, exact: false }, null, null]);
+});
+test('spellMatch: an exact match claims its keyword before a close one', () => {
+  const got = match(['cats', 'cat s'], ['cats']);
+  assert.deepEqual(got, [{ j: 0, exact: true }, null]);
+});
+test('spellMatch: one keyword is used once; order of typing does not matter', () => {
+  const targets = ['alpha', 'bravo'];
+  assert.deepEqual(match(['bravo', 'alpha'], targets), [
+    { j: 1, exact: true },
+    { j: 0, exact: true },
+  ]);
+  assert.deepEqual(match(['alpha', 'alpa'], targets), [{ j: 0, exact: true }, null]);
+});
+test('spellMatch: blanks and no targets', () => {
+  assert.deepEqual(match(['', ''], ['a long word']), [null, null]);
+  assert.deepEqual(match(['abc'], []), [null]);
+});
+
 test('levenClose basics (threshold 0..2)', () => {
   assert.equal(levenClose('abc', 'abc', 0), true);
   assert.equal(levenClose('abc', 'abd', 0), false);
