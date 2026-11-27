@@ -57,10 +57,10 @@ function test(name, fn) {
     console.log('FAIL ' + name + '\n     ' + err.message);
   }
 }
-function check(label, fg, bgs) {
+function check(label, fg, bgs, min = 4.5) {
   for (const bg of bgs) {
     const r = ratio(fg, bg);
-    assert.ok(r >= 4.5, `${label}: #${fg} on #${bg} = ${r.toFixed(2)} (< 4.5)`);
+    assert.ok(r >= min, `${label}: #${fg} on #${bg} = ${r.toFixed(2)} (< ${min})`);
   }
 }
 
@@ -87,6 +87,52 @@ for (const [theme, vars] of [['light', rootVars], ['dark', darkVars]]) {
       check(`${theme} ${token}`, hexes(`var(${token})`, vars)[0], surfaces);
     }
     check(`${theme} --purple-t`, hexes('var(--purple-t)', vars)[0], surfaces);
+  });
+}
+
+// Spell pills: a translucent tint over the card; text >= 4.5:1, glyph (a graphic) >= 3:1.
+function over(value, bgHex) {
+  const m = value.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
+  assert.ok(m, `not an rgba() tint: ${value}`);
+  const alpha = Number(m[4]);
+  return [1, 2, 3]
+    .map((i, k) => {
+      const bg = parseInt(bgHex.slice(k * 2, k * 2 + 2), 16);
+      const mixed = Math.round(Number(m[i]) * alpha + bg * (1 - alpha));
+      return mixed.toString(16).padStart(2, '0');
+    })
+    .join('');
+}
+for (const [theme, vars, prefix] of [
+  ['light', rootVars, ''],
+  ['dark', darkVars, '[data-theme="dark"] '],
+]) {
+  test(`${theme}: spell pill text and glyph on each result tint`, () => {
+    const slot = rule('.kw-pill.spell-slot');
+    const states = [
+      ['exact', '.kw-pill.spell-slot.correct', '--mint-t'],
+      ['close', '.kw-pill.spell-slot.close', '--amber-t'],
+      ['wrong', '.kw-pill.spell-slot.wrong', '--pink-t'],
+    ];
+    for (const [name, selector, glyphToken] of states) {
+      const light = rule(selector);
+      let themed = {};
+      try {
+        themed = rule(prefix + selector);
+      } catch {
+        themed = {};
+      }
+      const decl = prefix && themed['-webkit-text-fill-color'] ? themed : { ...slot, ...light };
+      const textVar = decl['-webkit-text-fill-color'] || slot['-webkit-text-fill-color'];
+      const text = hexes(textVar, vars)[0];
+      const glyph = hexes(`var(${glyphToken})`, vars)[0];
+      for (const surface of ['--surface', '--surface2', '--bg2']) {
+        const under = hexes(vars[surface], vars)[0];
+        const bg = over(light.background, under);
+        check(`${theme} ${name} text on ${surface}`, text, [bg]);
+        check(`${theme} ${name} glyph on ${surface}`, glyph, [bg], 3);   // WCAG 1.4.11
+      }
+    }
   });
 }
 

@@ -106,6 +106,48 @@ const answers = () => [
   assert.equal(w.document.activeElement, slots[1], 'focus on the first empty slot');
   console.log('ok   spell inputs: value kept and packed, focus, attributes');
 }
+// ── spell tiers: exact vs close marks, glyph cell, summary line, reset on edit
+{
+  const env = boot({ cards: [card('1', 'mitochondria;nucleus;ribosome;golgi')] });
+  await env.start();
+  const { w } = env;
+  w.eval('shownCount = 0; shuffledKw = ["mitochondria","nucleus","ribosome","golgi"];' +
+         ' spellOpen = true; renderFront();');
+  const slots = () => [...w.document.querySelectorAll('.spell-slot')];
+  const tier = (el) => ['exact', 'close', 'wrong'].find((c) => el.classList.contains(c)) || '';
+  const tiers = () => slots().map(tier);
+  const result = () => w.document.getElementById('spell-result');
+  const fill = (values) => slots().forEach((el, i) => {
+    el.value = values[i];
+  });
+  fill(['Nucleus', 'mitocondria', 'xyz', '']);
+  w.checkSpelling();
+  assert.deepEqual(tiers(), ['exact', 'close', 'wrong', ''], 'tier per field, case is ignored');
+  assert.ok(slots()[0].classList.contains('correct'), 'exact keeps .correct');
+  assert.ok(slots()[1].classList.contains('correct'), 'close keeps .correct');
+  assert.ok(!slots()[2].classList.contains('correct'));
+  assert.equal(slots()[0].nextElementSibling.className, 'spell-glyph', 'glyph cell follows the input');
+  assert.equal(slots()[0].title, 'Exact');
+  assert.equal(slots()[3].title, '');
+  assert.equal(result().textContent, '2 / 3 matched: 1 exact, 1 close (1 keyword remaining)');
+  slots()[2].value = 'xyzz';
+  slots()[2].dispatchEvent(new w.Event('input', { bubbles: true }));
+  assert.deepEqual(tiers(), ['exact', 'close', '', ''], 'editing drops that field mark only');
+  assert.equal(result().style.display, 'none', 'and the stale summary');
+  fill(['mitochondria', 'nucleus', 'ribosome', 'golgi']);
+  w.checkSpelling();
+  assert.equal(result().textContent, '✓ All 4 exact!');
+  fill(['mitocondria', 'nucleus', 'ribosome', 'golgi']);
+  w.checkSpelling();
+  assert.equal(result().textContent, '✓ All 4 matched: 3 exact, 1 close');
+  fill(['xyz', '', '', '']);
+  w.checkSpelling();
+  assert.equal(result().textContent, '0 / 1 matched (3 keywords remaining)');
+  w.clearSpell();
+  assert.deepEqual(tiers(), ['', '', '', '']);
+  assert.ok(slots().every((el) => !el.hasAttribute('title')), 'clear drops the marks');
+  console.log('ok   spell tiers: exact / close / wrong marks, summary line, reset on edit');
+}
 {
   const env = boot({ cards: [card('1', 'alpha;bravo;charlie;delta')] });
   await env.start();

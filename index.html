@@ -445,6 +445,29 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 [data-theme="dark"] .kw-pill.spell-slot.correct {
   color: var(--mint); -webkit-text-fill-color: var(--mint);
 }
+/* Close match (within the typo budget): amber, so it reads apart from an exact one */
+.kw-pill.spell-slot.close {
+  border-color: var(--amber);
+  background: rgba(255,184,0,.10) !important;
+  color: var(--amber-t); -webkit-text-fill-color: var(--amber-t);
+}
+[data-theme="dark"] .kw-pill.spell-slot.close {
+  color: var(--amber); -webkit-text-fill-color: var(--amber);
+}
+/* Glyph per result: colour alone is not enough (mint / amber / pink) */
+.spell-cell { position: relative; display: inline-flex; max-width: 100%; }
+.spell-glyph {
+  position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
+  font-weight: 700; font-size: .95rem; line-height: 1; pointer-events: none;
+}
+/* indent, not padding: the input keeps its width, so pills do not reflow after Check */
+.kw-pill.spell-slot.correct, .kw-pill.spell-slot.wrong { text-indent: 20px; }
+.spell-slot.exact + .spell-glyph { color: var(--mint-t); }
+.spell-slot.close + .spell-glyph { color: var(--amber-t); }
+.spell-slot.wrong + .spell-glyph { color: var(--pink-t); }
+.spell-slot.exact + .spell-glyph::before { content: '\2713'; }
+.spell-slot.close + .spell-glyph::before { content: '\2248'; }
+.spell-slot.wrong + .spell-glyph::before { content: '\2715'; }
 /* Accent colors for revealed pills */
 .kw-pill:nth-child(5n+1) { background:rgba(255,45,135,.12);  color:var(--pink-t); }
 .kw-pill:nth-child(5n+2) { background:rgba(124,58,255,.12);  color:var(--purple-t); }
@@ -2041,6 +2064,8 @@ function renderFront() {
       area.appendChild(pill);
     } else if (spellOpen) {
       // Spell mode: editable input in place of ghost
+      const cell = document.createElement('span');
+      cell.className = 'spell-cell';
       const inp = document.createElement('input');
       inp.type = 'text';
       inp.className = 'kw-pill spell-slot';
@@ -2048,7 +2073,12 @@ function renderFront() {
       inp.value = saved[nextSaved++] || '';
       Object.entries(SPELL_INPUT_ATTRS).forEach(([k, v]) => inp.setAttribute(k, v));
       inp.addEventListener('keydown', e => { if (e.key === 'Enter') checkSpelling(); });
-      area.appendChild(inp);
+      inp.addEventListener('input', onSpellInput);
+      const glyph = document.createElement('span');
+      glyph.className = 'spell-glyph';
+      glyph.setAttribute('aria-hidden', 'true');
+      cell.append(inp, glyph);
+      area.appendChild(cell);
     } else {
       // Normal ghost placeholder
       const pill = document.createElement('span');
@@ -3993,6 +4023,38 @@ function spellScore(typed, target) {
   }
   return levenClose(a, b, spellThreshold(b)) ? 1 : Infinity;
 }
+// Assigns each typed value to the keyword it fits best; exact matches claim theirs first.
+// Returns one entry per input: null (blank or no match) or { j: target index, exact }.
+// A swapped letter pair is two edits (plain Levenshtein), so it needs a budget of 2.
+function spellMatch(typed, targets) {
+  const scores = typed.map(t =>
+    targets.map(kw => (t === '' ? Infinity : spellScore(t, kw)))
+  );
+  const best = scores.map(row => Math.min(...row));
+  const order = typed.map((_, i) => i).sort((a, b) => {
+    if (best[a] === best[b]) {
+      return 0;
+    }
+    return best[a] < best[b] ? -1 : 1;
+  });
+  const used = new Array(targets.length).fill(false);
+  const result = new Array(typed.length).fill(null);
+  for (const i of order) {
+    let bestJ = -1;
+    let bestScore = Infinity;
+    for (let j = 0; j < targets.length; j++) {
+      if (!used[j] && scores[i][j] < bestScore) {
+        bestScore = scores[i][j];
+        bestJ = j;
+      }
+    }
+    if (bestJ >= 0) {
+      result[i] = { j: bestJ, exact: bestScore === 0 };
+      used[bestJ] = true;
+    }
+  }
+  return result;
+}
 // @spell-end
 // Stop the keyboard from "fixing" the very spelling being tested.
 const SPELL_INPUT_ATTRS = {
@@ -4037,56 +4099,83 @@ function clearSpellResult() {
   document.getElementById('spell-result').style.display = 'none';
 }
 
+const SPELL_STATES = {
+  none:  { cls: '',               title: '' },
+  exact: { cls: ' correct exact', title: 'Exact' },
+  close: { cls: ' correct close', title: 'Close, not exact' },
+  wrong: { cls: ' wrong',         title: 'No match' }
+};
+
+function setSpellState(inp, name) {
+  const state = SPELL_STATES[name];
+  inp.className = 'kw-pill spell-slot' + state.cls;
+  if (state.title) {
+    inp.title = state.title;
+  } else {
+    inp.removeAttribute('title');
+  }
+}
+
+// A mark describes the typed text it was given for: editing drops that field's mark
+// and the summary line, which no longer describes the fields.
+function onSpellInput(e) {
+  setSpellState(e.target, 'none');
+  clearSpellResult();
+}
+
 function clearSpell() {
   document.querySelectorAll('.spell-slot').forEach(inp => {
     inp.value = '';
-    inp.className = 'kw-pill spell-slot';
+    setSpellState(inp, 'none');
   });
   document.getElementById('spell-result').textContent = '';
   document.getElementById('spell-result').style.display = 'none';
 }
 
 function checkSpelling() {
-  const slots  = [...document.querySelectorAll('.spell-slot')];
-  const typed  = slots.map(el => el.value.trim());
+  const slots = [...document.querySelectorAll('.spell-slot')];
+  const typed = slots.map(el => el.value.trim());
 
   // Spell slots correspond to hidden keywords: shuffledKw[shownCount..end]
   const targets = shuffledKw.slice(shownCount);
-  const used    = new Array(targets.length).fill(false);
-  const matched = new Array(slots.length).fill(null);
+  const match = spellMatch(typed, targets);
 
-  const scores = typed.map(t => targets.map(kw => spellScore(t, kw)));
-  // Process best-scoring inputs first (exact matches take priority)
-  const order = typed.map((_, i) => i).sort((a, b) =>
-    Math.min(...scores[a]) - Math.min(...scores[b])
-  );
-  for (const i of order) {
-    let bestJ = -1, bestScore = Infinity;
-    for (let j = 0; j < targets.length; j++) {
-      if (!used[j] && scores[i][j] < bestScore) { bestScore = scores[i][j]; bestJ = j; }
-    }
-    if (bestJ >= 0 && bestScore < Infinity) { matched[i] = bestJ; used[bestJ] = true; }
-  }
-
-  let correct = 0;
+  let exact = 0;
+  let close = 0;
   slots.forEach((inp, i) => {
-    if (typed[i] === '') { inp.className = 'kw-pill spell-slot'; return; }
-    if (matched[i] !== null) { inp.className = 'kw-pill spell-slot correct'; correct++; }
-    else                     { inp.className = 'kw-pill spell-slot wrong'; }
+    if (typed[i] === '') {
+      setSpellState(inp, 'none');
+    } else if (match[i] === null) {
+      setSpellState(inp, 'wrong');
+    } else if (match[i].exact) {
+      setSpellState(inp, 'exact');
+      exact++;
+    } else {
+      setSpellState(inp, 'close');
+      close++;
+    }
   });
 
   const filled   = typed.filter(t => t !== '').length;
   const total    = targets.length;
+  const matched  = exact + close;
   const resultEl = document.getElementById('spell-result');
   if (filled === 0) {
     resultEl.textContent = '';
     resultEl.style.display = 'none';
-  } else {
-    resultEl.textContent = correct === total
-      ? `✓ All ${total} correct!`
-      : `${correct} / ${filled} matched (${total - filled} keywords remaining)`;
-    resultEl.style.display = 'block';
+    return;
   }
+  const split = close > 0 ? `: ${exact} exact, ${close} close` : '';
+  if (matched === total) {
+    resultEl.textContent = close === 0
+      ? `✓ All ${total} exact!`
+      : `✓ All ${total} matched${split}`;
+  } else {
+    const left = total - filled;
+    const tail = left > 0 ? ` (${left} keyword${left === 1 ? '' : 's'} remaining)` : '';
+    resultEl.textContent = `${matched} / ${filled} matched${split}${tail}`;
+  }
+  resultEl.style.display = 'block';
 }
 
 // ── Progress ───────────────────────────────────────────────────────────────
@@ -4895,7 +4984,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.26.1';
+const APP_VERSION = '2026.11.27.1';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
