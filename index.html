@@ -454,14 +454,14 @@ button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 [data-theme="dark"] .kw-pill.spell-slot.close {
   color: var(--amber); -webkit-text-fill-color: var(--amber);
 }
-/* Glyph per result: colour alone is not enough (mint / amber / pink) */
+/* Glyph per result, at the right end of the pill: the input keeps its
+   width and text position, so nothing reflows after Check. Colour alone is not enough.
+   It overlaps the text area only when an entry fills the whole field. */
 .spell-cell { position: relative; display: inline-flex; max-width: 100%; }
 .spell-glyph {
-  position: absolute; left: 15px; top: 50%; transform: translateY(-50%);
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
   font-weight: 700; font-size: .95rem; line-height: 1; pointer-events: none;
 }
-/* indent, not padding: the input keeps its width, so pills do not reflow after Check */
-.kw-pill.spell-slot.correct, .kw-pill.spell-slot.wrong { text-indent: 20px; }
 .spell-slot.exact + .spell-glyph { color: var(--mint-t); }
 .spell-slot.close + .spell-glyph { color: var(--amber-t); }
 .spell-slot.wrong + .spell-glyph { color: var(--pink-t); }
@@ -4984,7 +4984,7 @@ function loadWeightsHistory() {
 // loads the web app again, so an update navigates the top window. That can be
 // blocked without a tap: after an automatic try the banner offers a Reload button
 // (and a hint to reload the tab by hand). The frame itself is never reloaded.
-const APP_VERSION = '2026.11.27.1';
+const APP_VERSION = '2026.11.28.1';
 const VERSION_CHECK_MIN_MS   = 60 * 1000;        // at most one check a minute
 const VERSION_CHECK_EVERY_MS = 10 * 60 * 1000;
 const UPDATE_TRY_KEY = 'fc-update-tried';        // one automatic try per version: no reload loop
